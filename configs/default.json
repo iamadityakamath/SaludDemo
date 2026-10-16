@@ -1,0 +1,9 @@
+{
+  "seed": 7,
+  "n_guarantors": 2000,
+  "n_agents": 40,
+  "history_start": "2025-07-01",
+  "prediction_cutoff": "2026-04-01",
+  "outcome_horizon_days": 90,
+  "outcome": {"call_quality": 0.5}
+}

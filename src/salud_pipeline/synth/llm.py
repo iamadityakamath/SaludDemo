@@ -1,0 +1,78 @@
+"""LLM-written transcripts from planted call truth, via any OpenAI-compatible endpoint.
+
+Intended for a self-hosted model (Ollama, vLLM, llama.cpp server) inside the approved
+environment. Synthetic calls contain no PHI, but keep generation local anyway so the same
+setup can later score real calls.
+
+Use a different model family to *generate* calls than the one used to *score* them in
+Phase 4, otherwise the LLM scorer is graded on its own writing style.
+"""
+
+from __future__ import annotations
+
+import json
+import urllib.request
+
+from .. import schema as S
+
+BEHAVIOR = {
+    "greeting": ("opens with the full greeting script: name, department, recorded-line notice",
+                 "skips the greeting script (no name or department, abrupt opening)"),
+    "culture": ("stays courteous, patient and empathetic; never pressures",
+                "sounds impatient or dismissive, or pressures the caller to pay immediately"),
+    "capturing_data": ("confirms or updates the callback number and mailing address",
+                       "never confirms contact details"),
+    "understanding_needs": ("restates the caller's concern and offers options that fit it "
+                            "(financial assistance or a plan when there is hardship)",
+                            "ignores the actual concern and pushes for payment"),
+    "correct_info": ("explains the balance and next steps accurately",
+                     "gives vague or contradictory information"),
+    "first_contact_resolution": ("fully resolves the caller's issue on this call",
+                                 "leaves the issue unresolved (callback, transfer, or 'call back later')"),
+    "compliance": ("verifies name and date of birth BEFORE discussing any balance",
+                   "discusses the balance before verifying identity, or with an unverified third party"),
+}
+
+
+def build_prompt(call: dict) -> str:
+    """Prompt that pins every planted label the transcript must express."""
+    behaviors = "\n".join(
+        f"- {BEHAVIOR[k][0] if call[f'qa_{k}'] else BEHAVIOR[k][1]}" for k in BEHAVIOR
+    )
+    caller = {"patient": "the patient", "non_patient_guarantor": "a family member responsible for the bill",
+              "insurance": "an insurance company representative"}[call["caller_type"]]
+    return f"""Write a realistic phone call transcript between a hospital billing agent and {caller}.
+
+Setting: US hospital patient billing office (healthcare revenue cycle). Direction: {call['direction'].replace('_', ' ')}.
+Caller's situation: {call['scenario'].replace('_', ' ')}. Open balance discussed: ${call['total_balance_discussed']:,.2f}.
+Caller mood: {call['sentiment_label']}. Language preference: {call['language']}.
+How the call ends: {call['true_result'].replace('_', ' ')}{' (caller hangs up)' if call['hung_up'] else ''}.
+{f"Promised payment date: {call['promise_date']}." if call.get('promise_date') else ''}
+
+The agent MUST show exactly these behaviors:
+{behaviors}
+
+Format rules:
+- One turn per paragraph as 'Speaker: text'. Speakers: Agent, Patient, Patient Representative,
+  Insurance Representative, Automated System (inferred).
+- Inbound calls start with an Automated System recording notice.
+- Never invent names, dates of birth, phone numbers, addresses or account numbers. Use tokens such as
+  [REDACTED NAME], [REDACTED DOB RESPONSE], [REDACTED PHONE NUMBER], [REDACTED SERVICE DATE].
+- Natural speech with occasional fillers (um, uh), 12-30 turns. Output only the transcript."""
+
+
+def prompt_record(call: dict) -> dict:
+    return {"contact_id": call["contact_id"], "prompt": build_prompt(call),
+            "labels": {k: bool(call[f"qa_{k}"]) for k in S.QA_KEYS},
+            "sentiment_label": call["sentiment_label"], "true_result": call["true_result"]}
+
+
+def generate_with_endpoint(prompt: str, base_url: str, model: str, temperature: float = 0.8,
+                           timeout: int = 120) -> str:
+    """Call an OpenAI-compatible /chat/completions endpoint (e.g. http://localhost:11434/v1)."""
+    body = json.dumps({"model": model, "temperature": temperature,
+                       "messages": [{"role": "user", "content": prompt}]}).encode()
+    req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", data=body,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())["choices"][0]["message"]["content"].strip()

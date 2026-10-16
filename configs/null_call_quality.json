@@ -1,0 +1,5 @@
+{
+  "seed": 7,
+  "n_guarantors": 2000,
+  "outcome": {"call_quality": 0.0, "promised_to_pay": 0.0}
+}

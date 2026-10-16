@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store
+
+# Client-provided material: redacted, but keep it out of any remote.
+# Remove these lines only with Salud's sign-off.
+data/Redacted Transcripts (Raw)/
+data/Redacted Transcripts with Inferred Speakers/
+data/BIG_Schema_Only_Handoff/
+docs/
+
+# Generated synthetic runs (reproducible from config + seed)
+data/synthetic/
