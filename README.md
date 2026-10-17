@@ -85,7 +85,7 @@ cp .env.example .env        # then set GROQ_API_KEY=...
 .venv/bin/salud-qa ping     # confirms the key works and lists available models
 ```
 
-With only `GROQ_API_KEY` set, everything uses Groq at `https://api.groq.com/openai/v1` with `GROQ_MODEL` (default `llama-3.3-70b-versatile`). To use a team or self-hosted OpenAI-compatible server instead, set `SALUD_LLM_BASE_URL`, `SALUD_LLM_MODEL` and `SALUD_LLM_API_KEY`. Real environment variables override `.env`.
+With only `GROQ_API_KEY` set, everything uses Groq at `https://api.groq.com/openai/v1` with `GROQ_MODEL` (default `openai/gpt-oss-120b`). To use a team or self-hosted OpenAI-compatible server instead, set `SALUD_LLM_BASE_URL`, `SALUD_LLM_MODEL` and `SALUD_LLM_API_KEY`. Real environment variables override `.env`.
 
 **Real calls stay local by default.** Groq is a third-party cloud service, and the brief requires real call data to stay inside a HIPAA-compliant environment. Synthetic calls can go to Groq freely. The 10 real redacted calls are sent to a non-local LLM only with `--include-real`; use it only after Salud approves.
 

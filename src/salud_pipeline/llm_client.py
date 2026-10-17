@@ -4,7 +4,7 @@ Configuration comes from the environment or a repo-root .env file (gitignored), 
 key lands in git. Real environment variables win over .env.
 
     GROQ_API_KEY         Groq key; selects https://api.groq.com/openai/v1 unless a base URL is set
-    GROQ_MODEL           Groq model id (default llama-3.3-70b-versatile)
+    GROQ_MODEL           Groq model id (default openai/gpt-oss-120b)
     SALUD_LLM_BASE_URL   any other OpenAI-compatible server  (default http://localhost:11434/v1)
     SALUD_LLM_MODEL      model id for that server (overrides GROQ_MODEL)
     SALUD_LLM_API_KEY    bearer token for that server (overrides GROQ_API_KEY)
@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
