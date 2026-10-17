@@ -6,9 +6,11 @@ One page lists every call from every source (the real redacted calls and a synth
 filters for source, tagging status and ID. Serves on 127.0.0.1 only.
 
 Each source keeps its own labels CSV, so synthetic practice tags never mix into the real ground
-truth. When an LLM is configured (.env / environment, see llm_client.py), opening a call pre-fills
+truth. When an LLM is configured (.env / environment, see llm_client.py), the Analyze button pre-fills
 the checklist from one review that cites the transcript turns behind each answer and suggests
-coaching tips. Saved rows record which model pre-filled them and which items the rater overrode.
+coaching tips. The LLM runs only when the rater presses Analyze; reopening an analyzed call
+shows the cached result. Saved rows record which model pre-filled them and which items the rater
+overrode.
 
 Real client transcripts are sent to a non-local LLM (e.g. Groq) only with include_real=True.
 """
@@ -123,7 +125,7 @@ class LabelStore:
 
 
 class Suggester:
-    """CallAssistant plus the per-call real-data guard and background prefetch."""
+    """CallAssistant plus the per-call real-data guard. Never calls the LLM unless asked."""
 
     def __init__(self, endpoint: LLMEndpoint | None, cache_dir: Path, include_real: bool):
         self.endpoint = endpoint
@@ -145,7 +147,14 @@ class Suggester:
                 "provider": self.endpoint.provider if self.assistant else None}
         return base | {"real": self.blocked_reason(True), "synthetic": self.blocked_reason(False)}
 
-    def review(self, text: str, real: bool) -> dict:
+    def cached(self, text: str, real: bool) -> dict | None:
+        """Previous analysis from the local cache; never calls the LLM."""
+        if self.blocked_reason(real):
+            return None
+        return self.assistant.cached(text)
+
+    def review(self, text: str, real: bool, force: bool = False) -> dict:
+        """Runs only on an explicit Analyze click. Concurrent clicks share one LLM call."""
         reason = self.blocked_reason(real)
         if reason:
             return {"disabled": reason}
@@ -155,25 +164,21 @@ class Suggester:
             owner = ev is None
             if owner:
                 ev = self._inflight[key] = threading.Event()
-        if not owner:  # another thread (e.g. prefetch) is already asking; reuse its cached result
+        if not owner:
             ev.wait(timeout=180)
-            return self._safe(text)
+            return self._safe(text, force=False)
         try:
-            return self._safe(text)
+            return self._safe(text, force)
         finally:
             ev.set()
             with self._lock:
                 self._inflight.pop(key, None)
 
-    def _safe(self, text: str) -> dict:
+    def _safe(self, text: str, force: bool) -> dict:
         try:
-            return self.assistant.review(text)
+            return self.assistant.review(text, force=force)
         except (RuntimeError, ValueError) as e:
             return {"error": str(e)}
-
-    def prefetch(self, text: str, real: bool) -> None:
-        if self.blocked_reason(real) is None and not self.assistant._path(text).exists():
-            threading.Thread(target=self.review, args=(text, real), daemon=True).start()
 
 
 def _logo_path() -> Path | None:
@@ -211,15 +216,13 @@ def make_handler(store: LabelStore, rater: str, suggester: Suggester):
                 if store.call(cid) is None:
                     return self._json({"error": "unknown call"}, 404)
                 self._json(store.transcript(cid))
-            elif url.path == "/api/suggest":
+            elif url.path == "/api/analysis":
+                # Cached analysis only (shown when a call opens); never calls the LLM.
                 cid = q.get("id", [""])[0]
                 if store.call(cid) is None:
                     return self._json({"error": "unknown call"}, 404)
-                result = suggester.review(store.transcript(cid)["text"], store.source_of(cid).real)
-                nxt = q.get("next", [""])[0]  # the page sends the next call in its current filter
-                if store.call(nxt) is not None:
-                    suggester.prefetch(store.transcript(nxt)["text"], store.source_of(nxt).real)
-                self._json(result)
+                cached = suggester.cached(store.transcript(cid)["text"], store.source_of(cid).real)
+                self._json(cached or {"none": True})
             elif url.path == "/brand/logo":
                 p = _logo_path()
                 if p is None:
@@ -229,7 +232,19 @@ def make_handler(store: LabelStore, rater: str, suggester: Suggester):
                 self._json({"error": "not found"}, 404)
 
         def do_POST(self):
-            if urlparse(self.path).path != "/api/label":
+            path = urlparse(self.path).path
+            if path == "/api/analyze":
+                # The only route that calls the LLM: the page's Analyze button.
+                try:
+                    body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+                    cid = body["id"]
+                except (KeyError, json.JSONDecodeError) as e:
+                    return self._json({"error": str(e)}, 400)
+                if store.call(cid) is None:
+                    return self._json({"error": "unknown call"}, 404)
+                return self._json(suggester.review(store.transcript(cid)["text"], store.source_of(cid).real,
+                                                   force=bool(body.get("force"))))
+            if path != "/api/label":
                 return self._json({"error": "not found"}, 404)
             try:
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))

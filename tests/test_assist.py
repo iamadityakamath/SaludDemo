@@ -1,6 +1,7 @@
 import json
 import re
 import threading
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -133,17 +134,45 @@ def _get(url):
     return json.loads(urllib.request.urlopen(url).read())
 
 
-def test_suggest_and_provenance(llm_url, tmp_path):
+def _post(url, path, payload):
+    req = urllib.request.Request(url + path, data=json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"})
+    return json.loads(urllib.request.urlopen(req).read())
+
+
+def test_llm_runs_only_on_analyze(llm_url, tmp_path):
     httpd, url, csv, key = _tagger(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=False)
     try:
-        assert _get(url + "/api/state")["config"]["llm"]["synthetic"] is None
-        s = _get(url + f"/api/suggest?id={key}/a.txt&next={key}/b.txt")
-        assert s["checklist"]["greeting"]["answer"] == "Yes" and s["evidence_check"]["dropped"] == 0
+        # Opening the page and a call, and reading its analysis, never call the LLM.
+        _get(url + "/api/state")
+        _get(url + f"/api/call?id={key}/a.txt")
+        assert _get(url + f"/api/analysis?id={key}/a.txt") == {"none": True}
+        assert FakeLLM.calls == 0
+        # GET on the analyze route does nothing.
+        with pytest.raises(urllib.error.HTTPError):
+            urllib.request.urlopen(url + f"/api/analyze?id={key}/a.txt")
+        assert FakeLLM.calls == 0
+        # Analyze: one LLM call; afterwards the analysis is served from cache.
+        s = _post(url, "/api/analyze", {"id": f"{key}/a.txt"})
+        assert s["checklist"]["greeting"]["answer"] == "Yes" and s["analyzed_at"]
+        assert FakeLLM.calls == 1
+        assert _get(url + f"/api/analysis?id={key}/a.txt")["checklist"]
+        _post(url, "/api/analyze", {"id": f"{key}/a.txt"})            # cached
+        assert FakeLLM.calls == 1
+        _post(url, "/api/analyze", {"id": f"{key}/a.txt", "force": True})  # Re-analyze
+        assert FakeLLM.calls == 2
+        # The other call was never touched (no background prefetch).
+        assert _get(url + f"/api/analysis?id={key}/b.txt") == {"none": True}
+    finally:
+        httpd.shutdown()
+
+
+def test_save_records_provenance(llm_url, tmp_path):
+    httpd, url, csv, key = _tagger(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=False)
+    try:
         values = {k: "Yes" for k in TRANSCRIPT_ITEMS} | {"greeting": "No", "sentiment": "neutral", "outcome": "paid"}
         llm = {"model": "fake", "answers": {k: "Yes" for k in TRANSCRIPT_ITEMS} | {"sentiment": "neutral", "outcome": "paid"}}
-        req = urllib.request.Request(url + "/api/label", data=json.dumps({"id": f"{key}/a.txt", "values": values, "llm": llm}).encode(),
-                                     headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req)
+        _post(url, "/api/label", {"id": f"{key}/a.txt", "values": values, "llm": llm})
         row = pd.read_csv(csv, dtype=str, keep_default_na=False).query("file_id == 'a.txt'").iloc[0]
         assert row["llm_model"] == "fake" and row["overrides"] == "greeting"
     finally:
@@ -156,7 +185,8 @@ def test_real_calls_blocked_for_remote_llm(tmp_path):
     try:
         info = _get(url + "/api/state")["config"]["llm"]
         assert "--include-real" in info["real"]
-        assert "disabled" in _get(url + f"/api/suggest?id={key}/a.txt")
+        assert "disabled" in _post(url, "/api/analyze", {"id": f"{key}/a.txt"})
+        assert _get(url + f"/api/analysis?id={key}/a.txt") == {"none": True}
     finally:
         httpd.shutdown()
 

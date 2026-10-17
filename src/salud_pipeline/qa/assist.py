@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 from ..llm_client import LLMEndpoint
@@ -160,15 +161,22 @@ class CallAssistant:
         key = hashlib.sha256(f"{self.endpoint.model}|{PROMPT_VERSION}|{text}".encode()).hexdigest()[:24]
         return self.cache_dir / f"{key}.json"
 
-    def review(self, text: str) -> dict:
+    def cached(self, text: str) -> dict | None:
+        """A previous review of this transcript, without calling the LLM."""
         path = self._path(text)
-        if path.exists():
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def review(self, text: str, force: bool = False) -> dict:
+        """Cached review if there is one (unless force), otherwise one LLM call."""
+        path = self._path(text)
+        if not force and path.exists():
             return json.loads(path.read_text())
         turns = split_turns(text)
         raw = self.endpoint.chat([{"role": "system", "content": SYSTEM},
                                   {"role": "user", "content": build_prompt(turns)}],
                                  temperature=0.0, json_mode=True)
-        result = parse(raw, turns) | {"model": self.endpoint.model, "provider": self.endpoint.provider}
+        result = parse(raw, turns) | {"model": self.endpoint.model, "provider": self.endpoint.provider,
+                                      "analyzed_at": datetime.now().isoformat(timespec="seconds")}
         if result["ok"]:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(result))

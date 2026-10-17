@@ -148,6 +148,12 @@ textarea { min-height: 64px; resize: vertical; }
 .btn.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn:hover:not(:disabled):not(.primary) { border-color: var(--brand-grey); }
 .btn:disabled { opacity: .5; cursor: default; }
+.btn.analyze { display: inline-flex; align-items: center; gap: 7px; background: var(--ai); color: #fff; border-color: var(--ai); font-weight: 650; padding: 8px 16px; }
+.btn.analyze:hover:not(:disabled) { background: #0b555c; border-color: #0b555c; }
+.btn.analyze .spark { font-size: 13px; }
+.btn.analyze.busy .spark { animation: spin 1.2s linear infinite; display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.banner.hint { background: var(--ai-soft); color: var(--ai); }
 .status { font-size: 12px; color: var(--muted); }
 .footer .status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status.dirty { color: var(--warn); } .status.err { color: var(--no); }
@@ -178,7 +184,8 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; border: 1px solid v
     <span class="spacer"></span>
     <span class="chip" id="aichip"><span class="pulse"></span><span id="aitext">AI</span></span>
     <span class="chip" id="rater"></span>
-    <span class="status keys"><kbd>⌘S</kbd> save · <kbd>Alt</kbd><kbd>↑↓</kbd> calls</span>
+    <span class="status keys"><kbd>⌘↵</kbd> analyze · <kbd>⌘S</kbd> save · <kbd>Alt</kbd><kbd>↑↓</kbd> calls</span>
+    <button class="btn analyze" id="analyze" type="button"><span class="spark" aria-hidden="true">✦</span><span id="analyze-label">Analyze</span></button>
   </header>
   <div class="body">
     <nav aria-label="Calls">
@@ -429,7 +436,9 @@ function renderBanner() {
   const s = sugg(), c = call(), reason = aiBlocked(c);
   let html = "";
   if (reason) html = `<div class="banner">${esc(reason)}</div>`;
-  else if (s && s.error) html = `<div class="banner err">AI review failed: ${esc(s.error)} <button class="btn" style="padding:2px 8px;margin-left:6px" onclick="fetchSuggestion(true)">Retry</button></div>`;
+  else if (!S.config.llm.model) html = `<div class="banner">No LLM configured. Add GROQ_API_KEY to .env and restart.</div>`;
+  else if (s && s.error) html = `<div class="banner err">AI analysis failed: ${esc(s.error)} <button class="btn" style="padding:2px 8px;margin-left:6px" onclick="analyze(false)">Retry</button></div>`;
+  else if (!s) html = `<div class="banner hint">Press <b>Analyze</b> (top right) for AI suggestions, evidence and coaching tips.</div>`;
   else if (s && s.checklist && s.evidence_check?.dropped) html = `<div class="banner">${s.evidence_check.dropped} AI quote(s) didn't match the transcript and were hidden.</div>`;
   $("banner").innerHTML = html;
 }
@@ -443,7 +452,9 @@ function renderSummary() {
 function renderTips() {
   const s = sugg(), el = $("tips");
   if (aiBlocked(call())) { el.innerHTML = `<div class="empty">Coaching tips appear here when AI is enabled for this call.</div>`; $("coachcount").textContent = ""; return; }
-  if (!s || s.loading) { el.innerHTML = `<div class="tips"><div class="tip"><div class="skeleton"></div><div class="skeleton" style="width:60%"></div></div></div>`; $("coachcount").textContent = ""; return; }
+  if (!s) { el.innerHTML = `<div class="empty">Press Analyze to get coaching tips for this call.</div>`; $("coachcount").textContent = ""; return; }
+  if (s.error) { el.innerHTML = `<div class="empty">No coaching tips: the analysis failed.</div>`; $("coachcount").textContent = ""; return; }
+  if (s.loading) { el.innerHTML = `<div class="tips"><div class="tip"><div class="skeleton"></div><div class="skeleton" style="width:60%"></div></div></div>`; $("coachcount").textContent = ""; return; }
   const tips = s.coaching || [];
   $("coachcount").textContent = tips.length ? `· ${tips.length} tip${tips.length > 1 ? "s" : ""}` : "";
   if (!tips.length) { el.innerHTML = `<div class="empty">No coaching tips for this call.</div>`; return; }
@@ -495,28 +506,55 @@ function jumpTo(n) {
 }
 
 /* ---------- AI ---------- */
-async function fetchSuggestion(force) {
-  const id = S.cur, c = call();
-  if (!S.config.llm.model || aiBlocked(c)) { setAiChip(); return; }
-  if (!force && S.sugg[id] && !S.sugg[id].error && !S.sugg[id].loading) return applySuggestion(id);
-  S.sugg[id] = { loading: true }; setAiChip("loading"); paint();
-  const next = neighbour(1) || "";
-  let res;
-  try { res = await (await fetch(`/api/suggest?id=${encodeURIComponent(id)}&next=${encodeURIComponent(next)}`)).json(); }
-  catch (e) { res = { error: String(e) }; }
-  S.sugg[id] = res.disabled ? { error: res.disabled } : res;
-  if (S.cur === id) { setAiChip(); applySuggestion(id); }
+function setAnalyze() {
+  const b = $("analyze"), label = $("analyze-label"), c = call(), s = c && S.sugg[c.id];
+  b.classList.remove("busy");
+  if (!c || !S.config.llm.model) { b.disabled = true; label.textContent = "Analyze"; b.title = "No LLM configured. Add GROQ_API_KEY to .env and restart."; return; }
+  const reason = aiBlocked(c);
+  if (reason) { b.disabled = true; label.textContent = "Analyze"; b.title = reason; return; }
+  if (s && s.loading) { b.disabled = true; b.classList.add("busy"); label.textContent = "Analyzing…"; b.title = ""; return; }
+  b.disabled = false;
+  if (s && s.checklist) { label.textContent = "Re-analyze"; b.title = "Run the LLM again for this call" + (s.analyzed_at ? ` (last run ${s.analyzed_at.replace("T", " ")})` : ""); }
+  else { label.textContent = "Analyze"; b.title = "Ask the AI to review this call (one LLM call)"; }
 }
 
-function applySuggestion(id) {
-  const s = S.sugg[id];
-  // Pre-fill only calls this rater hasn't saved yet; saved answers always win.
-  if (s && s.checklist && !S.labels[id] && !S.dirty) {
-    S.config.items.forEach((k) => { if (s.checklist[k]?.answer) S.form[k] = s.checklist[k].answer; });
-    if (s.sentiment?.label) S.form.sentiment = s.sentiment.label;
-    if (s.outcome?.label) S.form.outcome = s.outcome.label;
-    $("status").textContent = "AI pre-filled · review and save"; $("status").className = "status";
+async function loadCached(id) {
+  // Shows an earlier analysis of this call from the local cache. Never calls the LLM.
+  const c = S.byId[id];
+  if (!S.config.llm.model || aiBlocked(c)) return;
+  if (S.sugg[id]) { if (S.sugg[id].checklist) applySuggestion(id); return; }
+  let res;
+  try { res = await (await fetch("/api/analysis?id=" + encodeURIComponent(id))).json(); } catch (e) { return; }
+  if (res && res.checklist) {
+    S.sugg[id] = res;
+    if (S.cur === id) { applySuggestion(id); setAnalyze(); }
   }
+}
+
+async function analyze() {
+  const id = S.cur, c = call();
+  if (!c || !S.config.llm.model || aiBlocked(c) || (S.sugg[id] && S.sugg[id].loading)) return;
+  const force = !!(S.sugg[id] && S.sugg[id].checklist);   // Re-analyze bypasses the cache
+  S.sugg[id] = { loading: true }; setAiChip("loading"); setAnalyze(); paint();
+  let res;
+  try {
+    res = await (await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, force }) })).json();
+  } catch (e) { res = { error: String(e) }; }
+  S.sugg[id] = res.disabled ? { error: res.disabled } : res;
+  if (S.cur === id) { setAiChip(); applySuggestion(id, true); setAnalyze(); }
+}
+
+function applySuggestion(id, announce) {
+  const s = S.sugg[id];
+  if (!s || !s.checklist) { paint(); return; }
+  // Fill only fields that are still empty: the rater's own choices are never overwritten.
+  const fill = { ...Object.fromEntries(S.config.items.map((k) => [k, s.checklist[k]?.answer])),
+                 sentiment: s.sentiment?.label, outcome: s.outcome?.label };
+  let n = 0;
+  for (const [k, v] of Object.entries(fill)) if (v && !S.form[k]) { S.form[k] = v; n++; }
+  if (n && !S.dirty) { $("status").textContent = `AI filled ${n} field${n > 1 ? "s" : ""} · review and save`; $("status").className = "status"; }
+  else if (announce && !n) { $("status").textContent = "AI suggestions shown · your answers kept"; $("status").className = "status"; }
   paint();
 }
 
@@ -529,15 +567,15 @@ async function show(id) {
   $("callid").textContent = c.file_id;
   $("status").textContent = status(id) === "done" ? "Saved" : ""; $("status").className = "status";
   document.querySelectorAll(".card").forEach((el) => el.classList.remove("active"));
-  renderList(); scrollListToCurrent(); setAiChip();
+  renderList(); scrollListToCurrent(); setAiChip(); setAnalyze();
   if (!S.text[id]) {
     $("turns").innerHTML = `<div class="skeleton" style="max-width:820px"></div><div class="skeleton" style="max-width:600px"></div>`;
     S.text[id] = await (await fetch("/api/call?id=" + encodeURIComponent(id))).json();
     if (S.cur !== id) return;
   }
   $("transcript").scrollTop = 0;
-  renderTranscript(); paint();
-  fetchSuggestion(false);
+  renderTranscript(); paint(); setAnalyze();
+  loadCached(id);
 }
 
 function markDirty() { S.dirty = true; $("status").textContent = "Unsaved changes"; $("status").className = "status dirty"; }
@@ -561,10 +599,12 @@ async function save(advance) {
 }
 
 $("save").onclick = () => save(true);
+$("analyze").onclick = () => analyze();
 $("prev").onclick = () => guard(() => { const p = neighbour(-1); if (p) show(p); });
 $("find").oninput = highlight;
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); save(false); }
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); analyze(); }
   if (e.altKey && e.key === "ArrowDown") { e.preventDefault(); guard(() => { const n = neighbour(1); if (n) show(n); }); }
   if (e.altKey && e.key === "ArrowUp") { e.preventDefault(); guard(() => { const p = neighbour(-1); if (p) show(p); }); }
 });

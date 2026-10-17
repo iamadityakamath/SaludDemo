@@ -110,16 +110,16 @@ Every scorer predicts the same targets: the 7 checklist items that are visible i
 
 - **Filters.** The Calls panel filters by source (All, Real, Synthetic, with counts), by status (not tagged, in progress, tagged), and by call-ID search. Prev / Save & next move through the filtered list. Your filter choice is remembered in the browser.
 - **Separate label files.** Real-call labels go to `data/ground_truth/real_calls_labels.csv` and synthetic ones to `synthetic_practice_labels.csv`, so practice tags never enter the real ground truth.
-- **AI pre-fill.** When a call opens, one LLM prompt returns all of the following, and the form is filled from it:
+- **Analyze button (top right).** The LLM runs only when you press **Analyze** (or ⌘/Ctrl+Enter). One prompt returns all of the following, and the form is filled from it:
   - an answer for each checklist item, with a short reason
   - the transcript turns behind each answer, quoted exactly
   - caller sentiment and call outcome
   - a one-line summary
   - 1–4 agent coaching tips
+- **Cached results.** Reopening an analyzed call shows the cached result without another LLM call. **Re-analyze** forces a fresh run. Results are cached in `reports/qa/assist_cache/`.
 - **Evidence.** Clicking or hovering a checklist card highlights its quoted lines in the transcript, and the chips jump to each turn. Every quote is checked against the transcript; quotes that don't match are hidden and counted, so nothing invented gets highlighted.
-- **You stay in control.** Any answer can be changed; a purple dot marks the AI's pick and a "changed" badge marks your override. Answers you've already saved are never overwritten.
+- **You stay in control.** The AI fills only empty fields and never overwrites your choices. A teal dot marks the AI's pick, and a "changed" badge marks your override.
 - **Agent coaching.** A collapsible panel along the bottom shows the tips, each linked to the turn it refers to.
-- **Speed.** Results are cached in `reports/qa/assist_cache/`, and the next call is fetched in the background.
 - **Provenance.** Each saved row records `llm_model` (blank means a human tagged it without AI help) and `overrides`, the items the rater changed. Pre-filled labels lean toward the AI's answers, so judge LLM accuracy on rows with a blank `llm_model`, or report the two groups separately.
 - **Logo.** Put `logo.svg` or `logo.png` in `branding/` (see [branding/README.md](branding/README.md)). Labels go to `data/ground_truth/real_calls_labels.csv`, which `salud-qa ml` and `salud-qa llm` read directly.
 
