@@ -10,7 +10,7 @@ import pytest
 from salud_pipeline import llm_client
 from salud_pipeline.llm_client import LLMEndpoint, load_dotenv
 from salud_pipeline.qa.assist import CallAssistant, parse, split_turns
-from salud_pipeline.qa.tag_server import serve
+from salud_pipeline.qa.tag_server import CallSource, serve
 from salud_pipeline.qa.targets import TRANSCRIPT_ITEMS, write_template
 
 TEXT = ("Agent: Thank you for calling billing, this is [REDACTED NAME]. How can I help?\n\n"
@@ -115,17 +115,18 @@ def test_assistant_caches(llm_url, tmp_path):
     assert r1 == r2 and FakeLLM.calls == 1 and r1["coaching"][0]["tip"] == "Keep it up."
 
 
-def _tagger(tmp_path, endpoint, real_data, include_real=False):
+def _tagger(tmp_path, endpoint, real, include_real=False):
     tdir = tmp_path / "calls"
     tdir.mkdir(exist_ok=True)
     (tdir / "a.txt").write_text(TEXT)
     (tdir / "b.txt").write_text(TEXT.replace("billing", "accounts"))
     csv = tmp_path / "labels.csv"
     write_template(csv, tdir)
-    httpd = serve(csv, tdir, "AK", port=0, endpoint=endpoint, real_data=real_data,
+    key = "real" if real else "synthetic"
+    httpd = serve([CallSource(key, key.title(), tdir, csv, real=real)], "AK", port=0, endpoint=endpoint,
                   include_real=include_real, cache_dir=tmp_path / "cache")
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    return httpd, f"http://127.0.0.1:{httpd.server_port}", csv
+    return httpd, f"http://127.0.0.1:{httpd.server_port}", csv, key
 
 
 def _get(url):
@@ -133,14 +134,14 @@ def _get(url):
 
 
 def test_suggest_and_provenance(llm_url, tmp_path):
-    httpd, url, csv = _tagger(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real_data=False)
+    httpd, url, csv, key = _tagger(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=False)
     try:
-        assert _get(url + "/api/state")["config"]["llm"]["enabled"] is True
-        s = _get(url + "/api/suggest?file_id=a.txt")
+        assert _get(url + "/api/state")["config"]["llm"]["synthetic"] is None
+        s = _get(url + f"/api/suggest?id={key}/a.txt&next={key}/b.txt")
         assert s["checklist"]["greeting"]["answer"] == "Yes" and s["evidence_check"]["dropped"] == 0
         values = {k: "Yes" for k in TRANSCRIPT_ITEMS} | {"greeting": "No", "sentiment": "neutral", "outcome": "paid"}
         llm = {"model": "fake", "answers": {k: "Yes" for k in TRANSCRIPT_ITEMS} | {"sentiment": "neutral", "outcome": "paid"}}
-        req = urllib.request.Request(url + "/api/label", data=json.dumps({"file_id": "a.txt", "values": values, "llm": llm}).encode(),
+        req = urllib.request.Request(url + "/api/label", data=json.dumps({"id": f"{key}/a.txt", "values": values, "llm": llm}).encode(),
                                      headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req)
         row = pd.read_csv(csv, dtype=str, keep_default_na=False).query("file_id == 'a.txt'").iloc[0]
@@ -151,18 +152,18 @@ def test_suggest_and_provenance(llm_url, tmp_path):
 
 def test_real_calls_blocked_for_remote_llm(tmp_path):
     remote = LLMEndpoint(base_url="https://api.groq.com/openai/v1", model="m", api_key="k")
-    httpd, url, _ = _tagger(tmp_path, remote, real_data=True)
+    httpd, url, _, key = _tagger(tmp_path, remote, real=True)
     try:
         info = _get(url + "/api/state")["config"]["llm"]
-        assert info["enabled"] is False and "--include-real" in info["reason"]
-        assert "disabled" in _get(url + "/api/suggest?file_id=a.txt")
+        assert "--include-real" in info["real"]
+        assert "disabled" in _get(url + f"/api/suggest?id={key}/a.txt")
     finally:
         httpd.shutdown()
 
 
 def test_no_llm_configured(tmp_path):
-    httpd, url, _ = _tagger(tmp_path, None, real_data=False)
+    httpd, url, _, _ = _tagger(tmp_path, None, real=False)
     try:
-        assert "GROQ_API_KEY" in _get(url + "/api/state")["config"]["llm"]["reason"]
+        assert "GROQ_API_KEY" in _get(url + "/api/state")["config"]["llm"]["synthetic"]
     finally:
         httpd.shutdown()

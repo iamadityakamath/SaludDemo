@@ -1,7 +1,7 @@
 """Phase 4 QA scoring: LLM vs traditional ML, validated against synthetic truth and human tags.
 
     salud-qa template                      # blank ground-truth sheet for the 10 real calls
-    salud-qa tag --rater AK                # local tagging page for the real calls
+    salud-qa tag --rater AK                # review page: real + synthetic calls, with filters
     salud-qa ping                          # check the team LLM endpoint and list its models
     salud-qa ml   --run data/synthetic/run_default
     salud-qa llm  --run data/synthetic/run_default --n 150 [--include-real]
@@ -67,26 +67,32 @@ def cmd_template(args) -> None:
 def cmd_tag(args) -> None:
     import webbrowser
 
-    from .tag_server import serve
+    from .tag_server import CallSource, serve
 
-    if args.run:
-        transcripts, csv = args.run / "transcripts", GT_CSV.with_name("synthetic_practice_labels.csv")
-        if args.limit:  # practice on a small, fixed subset of a synthetic run
-            subset = REPORTS.parent / "tag_practice" / args.run.name
-            subset.mkdir(parents=True, exist_ok=True)
-            for p in sorted(transcripts.glob("*.txt"))[: args.limit]:
-                (subset / p.name).write_text(p.read_text())
-            transcripts = subset
-    else:
-        transcripts, csv = REAL_DIR, GT_CSV
-    if not transcripts.exists():
-        sys.exit(f"No transcripts at {transcripts}")
+    sources = [
+        CallSource("real", "Real", REAL_DIR, GT_CSV, real=True),
+        CallSource("synthetic", "Synthetic", args.run / "transcripts",
+                   GT_CSV.with_name("synthetic_practice_labels.csv"), real=False),
+    ]
+    present = [s for s in sources if s.transcripts_dir.exists()]
+    if not present:
+        sys.exit(f"No transcripts found in {REAL_DIR} or {args.run / 'transcripts'}")
     endpoint = None if args.no_llm else _endpoint(args)
-    httpd = serve(csv, transcripts, args.rater.strip(), args.port, endpoint=endpoint,
-                  real_data=args.run is None, include_real=args.include_real)
+    try:
+        httpd = serve(present, args.rater.strip(), args.port, endpoint=endpoint, include_real=args.include_real)
+    except OSError as e:
+        if e.errno != 48 and "in use" not in str(e):
+            raise
+        sys.exit(f"Port {args.port} is already in use, probably by an earlier `salud-qa tag` still running.\n"
+                 f"Stop it with Ctrl+C in its terminal (or `lsof -ti:{args.port} | xargs kill`), "
+                 f"or pick another port with --port {args.port + 1}.")
     url = f"http://127.0.0.1:{httpd.server_port}/"
     llm = "off" if endpoint is None else f"{endpoint.provider} / {endpoint.model or 'no model set'}"
-    print(f"Tagging {transcripts.name} as {args.rater} -> {csv}\nLLM: {llm}\nOpen {url}  (Ctrl+C to stop)")
+    print(f"Rater {args.rater}. LLM: {llm}")
+    for s in sources:
+        n = len(list(s.transcripts_dir.glob("*.txt"))) if s.transcripts_dir.exists() else 0
+        print(f"  {s.label:9s} {n:5d} calls  -> {s.labels_csv}" + ("" if n else "  (not found, skipped)"))
+    print(f"Open {url}  (Ctrl+C to stop)")
     if not args.no_browser:
         webbrowser.open(url)
     try:
@@ -192,8 +198,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.choices["ml"].add_argument("--reps", type=int, default=3)
     tag = sub.add_parser("tag")
     tag.add_argument("--rater", required=True, help="your initials; each rater tags blind")
-    tag.add_argument("--run", type=Path, help="tag a synthetic run instead (practice / calibration)")
-    tag.add_argument("--limit", type=int, default=20, help="calls to include from a synthetic run")
+    tag.add_argument("--run", type=Path, default=REPO_ROOT / "data" / "synthetic" / "run_default",
+                     help="synthetic run whose calls are listed alongside the real ones")
     tag.add_argument("--port", type=int, default=8765)
     tag.add_argument("--no-browser", action="store_true")
     tag.add_argument("--no-llm", action="store_true", help="tag without AI suggestions")

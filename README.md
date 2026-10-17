@@ -11,7 +11,7 @@ One connected pipeline: **call transcript → QA / sentiment scores → payment 
 | Synthetic data generator (`salud_pipeline.synth`) | v0.1, working |
 | Outcome labels from receipts (`salud_pipeline.labels`) | v0.1 |
 | QA scoring harness (`salud_pipeline.qa`): LLM scorer, TF-IDF + LR scorer, metrics | v0.1, LLM not yet run (waiting on team endpoint) |
-| Hand-tagged ground truth for the 10 real calls | tagging tool ready (`salud-qa tag`), not filled |
+| Hand-tagged ground truth for the 10 real calls | review page ready (`salud-qa tag`), not filled |
 | Propensity models, thresholds, tiers | not started (Phase 5) |
 
 ## Setup
@@ -87,7 +87,7 @@ cp .env.example .env        # then set GROQ_API_KEY=...
 
 With only `GROQ_API_KEY` set, everything uses Groq at `https://api.groq.com/openai/v1` with `GROQ_MODEL` (default `openai/gpt-oss-120b`). To use a team or self-hosted OpenAI-compatible server instead, set `SALUD_LLM_BASE_URL`, `SALUD_LLM_MODEL` and `SALUD_LLM_API_KEY`. Real environment variables override `.env`.
 
-**Real calls stay local by default.** Groq is a third-party cloud service, and the brief requires real call data to stay inside a HIPAA-compliant environment. Synthetic calls can go to Groq freely. The 10 real redacted calls are sent to a non-local LLM only with `--include-real`; use it only after Salud approves.
+**Real calls stay local by default.** Groq is a third-party cloud service, and the brief requires real call data to stay inside a HIPAA-compliant environment. Synthetic calls can go to Groq freely. The 10 real redacted calls are sent to a non-local LLM only with `--include-real`; use it only after Salud approves. The review page applies this per call: real calls show "AI off for real calls", synthetic calls get suggestions.
 
 ## QA scoring (Phase 4)
 
@@ -101,13 +101,15 @@ With only `GROQ_API_KEY` set, everything uses Groq at `https://api.groq.com/open
 
 Every scorer predicts the same targets: the 7 checklist items that are visible in a transcript, plus caller sentiment and call outcome. Call Statusing and Grammar come from the CRM record and the agent note, not the transcript.
 
-**Tagging page.** `salud-qa tag` opens a local review page at http://127.0.0.1:8765. It only listens on this machine.
+**Review page.** `salud-qa tag` opens one local review page at http://127.0.0.1:8765 listing every call: the 10 real calls first, then the synthetic run (`--run`, default `data/synthetic/run_default`). It only listens on this machine.
 
 ```bash
-.venv/bin/salud-qa tag --rater AK                                   # real calls (AI suggestions off unless --include-real)
-.venv/bin/salud-qa tag --rater AK --run data/synthetic/run_default  # 20 synthetic practice calls, AI on
+.venv/bin/salud-qa tag --rater AK                  # AI on for synthetic calls, off for real calls
+.venv/bin/salud-qa tag --rater AK --include-real   # also AI on real calls (only after Salud approves Groq)
 ```
 
+- **Filters.** The Calls panel filters by source (All, Real, Synthetic, with counts), by status (not tagged, in progress, tagged), and by call-ID search. Prev / Save & next move through the filtered list. Your filter choice is remembered in the browser.
+- **Separate label files.** Real-call labels go to `data/ground_truth/real_calls_labels.csv` and synthetic ones to `synthetic_practice_labels.csv`, so practice tags never enter the real ground truth.
 - **AI pre-fill.** When a call opens, one LLM prompt returns all of the following, and the form is filled from it:
   - an answer for each checklist item, with a short reason
   - the transcript turns behind each answer, quoted exactly
