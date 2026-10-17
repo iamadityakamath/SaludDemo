@@ -11,7 +11,7 @@ One connected pipeline: **call transcript → QA / sentiment scores → payment 
 | Synthetic data generator (`salud_pipeline.synth`) | v0.1, working |
 | Outcome labels from receipts (`salud_pipeline.labels`) | v0.1 |
 | QA scoring harness (`salud_pipeline.qa`): LLM scorer, TF-IDF + LR scorer, metrics | v0.1, LLM not yet run (waiting on team endpoint) |
-| Hand-tagged ground truth for the 10 real calls | template ready, not filled |
+| Hand-tagged ground truth for the 10 real calls | tagging tool ready (`salud-qa tag`), not filled |
 | Propensity models, thresholds, tiers | not started (Phase 5) |
 
 ## Setup
@@ -100,7 +100,14 @@ Synthetic calls contain no PHI and can go to any team server. The 10 **real** re
 
 Every scorer predicts the same targets: the 7 checklist items that are visible in a transcript, plus caller sentiment and call outcome. Call Statusing and Grammar come from the CRM record and the agent note, not the transcript.
 
-**Ground truth.** Each rater fills one row per call, entering their initials in `rater`. Use Yes/No/N/A for the checklist items, negative/neutral/positive for sentiment, and one outcome from `qa/targets.py`. With two or more raters, inter-rater kappa is reported automatically.
+**Ground truth.** Tag the real calls with the local tagging page:
+
+```bash
+.venv/bin/salud-qa tag --rater AK                                       # real calls
+.venv/bin/salud-qa tag --rater AK --run data/synthetic/run_default       # practice on 20 synthetic calls
+```
+
+The page opens at http://127.0.0.1:8765 and listens only on this machine, so transcripts never leave it. Each rater sees only their own labels. Saving writes that rater's row to `data/ground_truth/real_calls_labels.csv`, which `salud-qa ml` and `salud-qa llm` read directly. Tag at least some calls with two raters to get inter-rater kappa. Practice labels go to a separate `synthetic_practice_labels.csv`, so raters can calibrate against calls whose answers are known.
 
 **Findings so far (Oct 16).** Trained on template calls, TF-IDF + LR reaches ~100% on synthetic test calls by around 500 training calls. That figure is an upper bound caused by formulaic phrasing, not a result. On the real calls it mislabels most greetings as failures and calls a transfer a hang-up. Real accuracy can't be measured until the calls are hand-tagged.
 
@@ -111,7 +118,7 @@ src/salud_pipeline/
   schema.py        table/column/option-code constants from the handoff
   labels.py        self-pay outcome labels at account grain
   synth/           config, world simulator, transcripts, LLM prompts, validation, CLI
-  qa/              QA targets, LLM scorer, ML scorer, evaluation, CLI
+  qa/              QA targets, LLM scorer, ML scorer, evaluation, local tagging page, CLI
 configs/           generator configs (default, null call-quality effect)
 tests/             validation, reproducibility, planted-effect recovery
 ```

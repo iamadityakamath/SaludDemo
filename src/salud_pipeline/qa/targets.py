@@ -67,7 +67,8 @@ def load_synthetic(run_dir: Path) -> pd.DataFrame:
 
 def load_ground_truth(labels_csv: Path, transcripts_dir: Path) -> pd.DataFrame:
     """Human tags in templates/ground_truth_template.csv format. Multiple raters allowed."""
-    gt = pd.read_csv(labels_csv, dtype=str).dropna(subset=["file_id"])
+    # keep_default_na=False: pandas would otherwise read a rater's literal "N/A" as missing.
+    gt = pd.read_csv(labels_csv, dtype=str, keep_default_na=False).replace("", None).dropna(subset=["file_id"])
     for col in TRANSCRIPT_ITEMS:
         gt[col] = gt[col].str.strip().str.capitalize().replace({"Na": "N/A", "N/a": "N/A"})
     gt["sentiment"] = gt["sentiment"].str.strip().str.lower()

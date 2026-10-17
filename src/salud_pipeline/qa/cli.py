@@ -1,6 +1,7 @@
 """Phase 4 QA scoring: LLM vs traditional ML, validated against synthetic truth and human tags.
 
     salud-qa template                      # blank ground-truth sheet for the 10 real calls
+    salud-qa tag --rater AK                # local tagging page for the real calls
     salud-qa ping                          # check the team LLM endpoint and list its models
     salud-qa ml   --run data/synthetic/run_default
     salud-qa llm  --run data/synthetic/run_default --n 150 [--include-real]
@@ -61,6 +62,34 @@ def cmd_template(args) -> None:
         sys.exit(f"{GT_CSV} exists; pass --force to overwrite")
     write_template(GT_CSV, REAL_DIR)
     print(f"Wrote {GT_CSV}: one row per real call. Duplicate rows per rater, fill rater initials.")
+
+
+def cmd_tag(args) -> None:
+    import webbrowser
+
+    from .tag_server import serve
+
+    if args.run:
+        transcripts, csv = args.run / "transcripts", GT_CSV.with_name("synthetic_practice_labels.csv")
+        if args.limit:  # practice on a small, fixed subset of a synthetic run
+            subset = REPORTS.parent / "tag_practice" / args.run.name
+            subset.mkdir(parents=True, exist_ok=True)
+            for p in sorted(transcripts.glob("*.txt"))[: args.limit]:
+                (subset / p.name).write_text(p.read_text())
+            transcripts = subset
+    else:
+        transcripts, csv = REAL_DIR, GT_CSV
+    if not transcripts.exists():
+        sys.exit(f"No transcripts at {transcripts}")
+    httpd = serve(csv, transcripts, args.rater.strip(), args.port)
+    url = f"http://127.0.0.1:{httpd.server_port}/"
+    print(f"Tagging {transcripts.name} as {args.rater} -> {csv}\nOpen {url}  (Ctrl+C to stop)")
+    if not args.no_browser:
+        webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
 
 
 def cmd_ml(args) -> None:
@@ -158,6 +187,12 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--run", type=Path, default=REPO_ROOT / "data" / "synthetic" / "run_default")
         p.add_argument("--seed", type=int, default=0)
     sub.choices["ml"].add_argument("--reps", type=int, default=3)
+    tag = sub.add_parser("tag")
+    tag.add_argument("--rater", required=True, help="your initials; each rater tags blind")
+    tag.add_argument("--run", type=Path, help="tag a synthetic run instead (practice / calibration)")
+    tag.add_argument("--limit", type=int, default=20, help="calls to include from a synthetic run")
+    tag.add_argument("--port", type=int, default=8765)
+    tag.add_argument("--no-browser", action="store_true")
     ping = sub.add_parser("ping")
     for p in (sub.choices["llm"], ping):
         p.add_argument("--base-url", help="default: $SALUD_LLM_BASE_URL or local Ollama")
@@ -169,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     REPORTS.mkdir(parents=True, exist_ok=True)
     try:
-        {"template": cmd_template, "ping": cmd_ping, "ml": cmd_ml, "llm": cmd_llm,
+        {"template": cmd_template, "tag": cmd_tag, "ping": cmd_ping, "ml": cmd_ml, "llm": cmd_llm,
          "summary": cmd_summary}[args.cmd](args)
     except RuntimeError as e:
         sys.exit(f"Error: {e}")
