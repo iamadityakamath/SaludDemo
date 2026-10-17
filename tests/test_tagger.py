@@ -48,7 +48,7 @@ def _state(url):
 def test_page_and_state(setup):
     start, _, _ = setup
     url = start("AK")
-    assert b"Call QA Tagger" in urllib.request.urlopen(url + "/").read()
+    assert b"Call QA Review" in urllib.request.urlopen(url + "/").read()
     st = _state(url)
     assert [c["file_id"] for c in st["calls"]] == ["a.txt", "b.txt"]
     assert "Editorial note" not in st["calls"][0]["text"]

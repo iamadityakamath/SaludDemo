@@ -81,9 +81,12 @@ def cmd_tag(args) -> None:
         transcripts, csv = REAL_DIR, GT_CSV
     if not transcripts.exists():
         sys.exit(f"No transcripts at {transcripts}")
-    httpd = serve(csv, transcripts, args.rater.strip(), args.port)
+    endpoint = None if args.no_llm else _endpoint(args)
+    httpd = serve(csv, transcripts, args.rater.strip(), args.port, endpoint=endpoint,
+                  real_data=args.run is None, include_real=args.include_real)
     url = f"http://127.0.0.1:{httpd.server_port}/"
-    print(f"Tagging {transcripts.name} as {args.rater} -> {csv}\nOpen {url}  (Ctrl+C to stop)")
+    llm = "off" if endpoint is None else f"{endpoint.provider} / {endpoint.model or 'no model set'}"
+    print(f"Tagging {transcripts.name} as {args.rater} -> {csv}\nLLM: {llm}\nOpen {url}  (Ctrl+C to stop)")
     if not args.no_browser:
         webbrowser.open(url)
     try:
@@ -193,6 +196,11 @@ def main(argv: list[str] | None = None) -> int:
     tag.add_argument("--limit", type=int, default=20, help="calls to include from a synthetic run")
     tag.add_argument("--port", type=int, default=8765)
     tag.add_argument("--no-browser", action="store_true")
+    tag.add_argument("--no-llm", action="store_true", help="tag without AI suggestions")
+    tag.add_argument("--include-real", action="store_true",
+                     help="allow sending real redacted calls to a non-local LLM (needs Salud approval)")
+    tag.add_argument("--base-url", help="default: $SALUD_LLM_BASE_URL, Groq if GROQ_API_KEY is set")
+    tag.add_argument("--model", help="default: $SALUD_LLM_MODEL / $GROQ_MODEL")
     ping = sub.add_parser("ping")
     for p in (sub.choices["llm"], ping):
         p.add_argument("--base-url", help="default: $SALUD_LLM_BASE_URL or local Ollama")

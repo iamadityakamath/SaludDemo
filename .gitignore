@@ -21,3 +21,8 @@ data/synthetic/
 # Human tags on real calls and generated reports
 data/ground_truth/
 reports/
+
+# Secrets (API keys)
+.env
+.env.*
+!.env.example

@@ -19,6 +19,8 @@ SENTIMENTS = ["negative", "neutral", "positive"]
 OUTCOMES = ["paid", "payment_plan", "promise_to_pay", "non_committal", "refused_or_disputed",
             "insurance_followup", "transferred", "hung_up"]
 TARGETS = TRANSCRIPT_ITEMS + ["sentiment", "outcome"]
+# Ground-truth CSV columns. llm_model/overrides record LLM pre-fill provenance (blank = human-only).
+LABEL_COLUMNS = ["file_id", "rater"] + TARGETS + ["notes", "llm_model", "overrides"]
 
 ITEM_DEFINITIONS = {
     "greeting": "Agent opens with the approved script: identifies themself and the department "
@@ -79,7 +81,7 @@ def load_ground_truth(labels_csv: Path, transcripts_dir: Path) -> pd.DataFrame:
 
 
 def write_template(path: Path, transcripts_dir: Path | None = None) -> None:
-    cols = ["file_id", "rater"] + TARGETS + ["notes"]
+    cols = LABEL_COLUMNS
     rows = []
     if transcripts_dir is not None:
         rows = [{"file_id": p.name} for p in sorted(transcripts_dir.glob("*.txt"))]
