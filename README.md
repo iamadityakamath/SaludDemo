@@ -10,8 +10,8 @@ One connected pipeline: **call transcript → QA / sentiment scores → payment 
 |---|---|
 | Synthetic data generator (`salud_pipeline.synth`) | v0.1, working |
 | Outcome labels from receipts (`salud_pipeline.labels`) | v0.1 |
-| LLM QA scorer | not started (Phase 4) |
-| Traditional ML QA scorer | not started (Phase 4) |
+| QA scoring harness (`salud_pipeline.qa`): LLM scorer, TF-IDF + LR scorer, metrics | v0.1, LLM not yet run (waiting on team endpoint) |
+| Hand-tagged ground truth for the 10 real calls | template ready, not filled |
 | Propensity models, thresholds, tiers | not started (Phase 5) |
 
 ## Setup
@@ -72,9 +72,37 @@ data/synthetic/<run>/
 ### Transcript modes
 
 - `--transcripts template` (default) is rule-based and reproducible. Its phrasing is formulaic, so TF-IDF models will look better on it than on real calls. **Never report template-only accuracy as a result.**
-- `--transcripts llm --llm-base-url http://localhost:11434/v1 --llm-model <model>` writes each call through a self-hosted, OpenAI-compatible model.
+- `--transcripts llm` writes each call through the team LLM endpoint (see below; `--llm-model` overrides the model).
   - Use a **different model family** for generation than for scoring, so the scorer isn't graded on its own writing style.
   - Always report accuracy on the 10 real hand-tagged calls separately.
+
+## LLM endpoint
+
+The LLM scorer and LLM transcript mode both call the team-hosted, OpenAI-compatible server (vLLM, Ollama or llama.cpp). It is configured through environment variables, so URLs and keys never go into git:
+
+```bash
+export SALUD_LLM_BASE_URL="https://<team-server>/v1"
+export SALUD_LLM_MODEL="<model id from salud-qa ping>"
+export SALUD_LLM_API_KEY="<token, if the server needs one>"
+```
+
+Synthetic calls contain no PHI and can go to any team server. The 10 **real** redacted calls are sent to a non-local server only when you pass `--include-real`. Pass it only once the server is confirmed inside the HIPAA-approved environment, which is still pending Salud's sign-off.
+
+## QA scoring (Phase 4)
+
+```bash
+.venv/bin/salud-qa template      # writes data/ground_truth/real_calls_labels.csv (gitignored)
+.venv/bin/salud-qa ml            # learning curve on synthetic calls, plus real calls once tagged
+.venv/bin/salud-qa ping         # check the team endpoint and list its models
+.venv/bin/salud-qa llm --n 150   # add --include-real once the server is HIPAA-approved
+.venv/bin/salud-qa summary
+```
+
+Every scorer predicts the same targets: the 7 checklist items that are visible in a transcript, plus caller sentiment and call outcome. Call Statusing and Grammar come from the CRM record and the agent note, not the transcript.
+
+**Ground truth.** Each rater fills one row per call, entering their initials in `rater`. Use Yes/No/N/A for the checklist items, negative/neutral/positive for sentiment, and one outcome from `qa/targets.py`. With two or more raters, inter-rater kappa is reported automatically.
+
+**Findings so far (Oct 16).** Trained on template calls, TF-IDF + LR reaches ~100% on synthetic test calls by around 500 training calls. That figure is an upper bound caused by formulaic phrasing, not a result. On the real calls it mislabels most greetings as failures and calls a transfer a hang-up. Real accuracy can't be measured until the calls are hand-tagged.
 
 ## Layout
 
@@ -83,6 +111,7 @@ src/salud_pipeline/
   schema.py        table/column/option-code constants from the handoff
   labels.py        self-pay outcome labels at account grain
   synth/           config, world simulator, transcripts, LLM prompts, validation, CLI
+  qa/              QA targets, LLM scorer, ML scorer, evaluation, CLI
 configs/           generator configs (default, null call-quality effect)
 tests/             validation, reproducibility, planted-effect recovery
 ```

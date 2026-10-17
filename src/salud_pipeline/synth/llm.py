@@ -10,10 +10,8 @@ Phase 4, otherwise the LLM scorer is graded on its own writing style.
 
 from __future__ import annotations
 
-import json
-import urllib.request
-
 from .. import schema as S
+from ..llm_client import LLMEndpoint
 
 BEHAVIOR = {
     "greeting": ("opens with the full greeting script: name, department, recorded-line notice",
@@ -67,12 +65,5 @@ def prompt_record(call: dict) -> dict:
             "sentiment_label": call["sentiment_label"], "true_result": call["true_result"]}
 
 
-def generate_with_endpoint(prompt: str, base_url: str, model: str, temperature: float = 0.8,
-                           timeout: int = 120) -> str:
-    """Call an OpenAI-compatible /chat/completions endpoint (e.g. http://localhost:11434/v1)."""
-    body = json.dumps({"model": model, "temperature": temperature,
-                       "messages": [{"role": "user", "content": prompt}]}).encode()
-    req = urllib.request.Request(base_url.rstrip("/") + "/chat/completions", data=body,
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())["choices"][0]["message"]["content"].strip()
+def generate_with_endpoint(prompt: str, endpoint: LLMEndpoint, temperature: float = 0.8) -> str:
+    return endpoint.chat([{"role": "user", "content": prompt}], temperature=temperature).strip()

@@ -17,3 +17,7 @@ docs/
 
 # Generated synthetic runs (reproducible from config + seed)
 data/synthetic/
+
+# Human tags on real calls and generated reports
+data/ground_truth/
+reports/

@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 
 from .. import schema as S
+from ..llm_client import LLMEndpoint
 from .config import GeneratorConfig
 from .llm import generate_with_endpoint, prompt_record
 from .transcripts import render_template
@@ -33,7 +34,7 @@ CRM_TABLES = [S.GUARANTOR, S.ACCOUNTS, S.CONTACTS, S.BRIDGE, S.RECEIPTS, S.QA_RE
 
 
 def _write_transcripts(calls: pd.DataFrame, out: Path, cfg: GeneratorConfig, mode: str,
-                       base_url: str | None, model: str | None, limit: int | None) -> int:
+                       endpoint: LLMEndpoint, limit: int | None) -> int:
     tdir = out / "transcripts"
     tdir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(cfg.seed + 1)  # separate stream: transcripts never change the tables
@@ -48,7 +49,7 @@ def _write_transcripts(calls: pd.DataFrame, out: Path, cfg: GeneratorConfig, mod
         if mode == "llm":
             if limit is not None and n >= limit:
                 break
-            text = generate_with_endpoint(prompt_record(call)["prompt"], base_url, model)
+            text = generate_with_endpoint(prompt_record(call)["prompt"], endpoint)
         else:
             text = render_template(call, rng, cfg.transcript_noise)
         (tdir / f"{call['contact_id']}.txt").write_text(text)
@@ -80,8 +81,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int)
     ap.add_argument("--n-guarantors", type=int)
     ap.add_argument("--transcripts", choices=["template", "llm", "none"], default="template")
-    ap.add_argument("--llm-base-url", default="http://localhost:11434/v1")
-    ap.add_argument("--llm-model", default="llama3.1:8b")
+    ap.add_argument("--llm-base-url", help="default: $SALUD_LLM_BASE_URL or local Ollama")
+    ap.add_argument("--llm-model", help="default: $SALUD_LLM_MODEL; use a different family than the scorer")
     ap.add_argument("--llm-limit", type=int, help="max calls to send to the LLM")
     args = ap.parse_args(argv)
 
@@ -105,8 +106,10 @@ def main(argv: list[str] | None = None) -> int:
         for name, df in tables.items():
             df.to_sql(name, con, if_exists="replace", index=False)
 
-    n_tx = _write_transcripts(tables["truth_calls"], out, cfg, args.transcripts,
-                              args.llm_base_url, args.llm_model, args.llm_limit)
+    endpoint = LLMEndpoint()
+    endpoint.base_url = args.llm_base_url or endpoint.base_url
+    endpoint.model = args.llm_model or endpoint.model
+    n_tx = _write_transcripts(tables["truth_calls"], out, cfg, args.transcripts, endpoint, args.llm_limit)
 
     manifest = {
         "generator": "salud_pipeline.synth v0.1",
