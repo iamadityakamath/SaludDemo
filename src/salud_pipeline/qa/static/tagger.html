@@ -133,6 +133,15 @@ aside { background: var(--panel); border-left: 1px solid var(--line); display: g
 .reason { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
 .reason .ai { color: var(--ai); font-weight: 650; }
 .changed { font-size: 11px; color: var(--warn); background: var(--warn-soft); border-radius: 999px; padding: 1px 8px; }
+/* AI could not determine an answer: red until the rater answers, then a red badge remains. */
+.missing-tag { font-size: 11px; font-weight: 650; color: var(--no); background: var(--no-soft); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.card.ai-missing { border-color: var(--no); background: var(--no-soft); box-shadow: inset 3px 0 0 var(--no); }
+.card.ai-missing.answered { background: var(--panel); border-color: color-mix(in srgb, var(--no) 40%, var(--line)); box-shadow: inset 3px 0 0 color-mix(in srgb, var(--no) 55%, transparent); }
+.card.ai-missing .reason .miss { color: var(--no); font-weight: 600; }
+.field.ai-missing { border: 1px solid var(--no); background: var(--no-soft); border-radius: 8px; padding: 6px; box-shadow: inset 3px 0 0 var(--no); }
+.field.ai-missing.answered { background: transparent; border-color: color-mix(in srgb, var(--no) 40%, var(--line)); }
+.field .miss { color: var(--no); font-size: 12px; font-weight: 600; margin-top: 4px; }
+.banner.err-soft { background: var(--no-soft); color: var(--no); }
 .evs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .ev { border: 1px solid color-mix(in srgb, var(--ai) 30%, var(--line)); background: var(--ai-soft); color: var(--ink); border-radius: 6px;
   padding: 2px 8px; font-size: 12px; cursor: pointer; max-width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -219,11 +228,11 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; border: 1px solid v
         <div class="section-title"><h2>Checklist</h2><span class="status" id="legend"></span></div>
         <div id="banner"></div>
         <div id="items"></div>
-        <label class="block">Caller sentiment</label>
-        <div id="sentiment"></div>
+        <label class="block">Caller sentiment <span class="missing-tag" id="sentiment-missing" hidden>AI: no answer</span></label>
+        <div class="field" id="sentiment-field"><div id="sentiment"></div><div class="miss" id="sentiment-miss" hidden>AI couldn't determine this — please answer manually.</div></div>
         <div class="evs" id="sentiment-ev"></div>
-        <label class="block" for="outcome">Call outcome</label>
-        <select id="outcome"></select>
+        <label class="block" for="outcome">Call outcome <span class="missing-tag" id="outcome-missing" hidden>AI: no answer</span></label>
+        <div class="field" id="outcome-field"><select id="outcome"></select><div class="miss" id="outcome-miss" hidden>AI couldn't determine this — please answer manually.</div></div>
         <div class="evs" id="outcome-ev"></div>
         <label class="block" for="notes">Notes</label>
         <textarea id="notes" placeholder="Anything ambiguous: why N/A, garbled audio, disagreement with AI…"></textarea>
@@ -355,7 +364,7 @@ function buildForm() {
     const card = document.createElement("div");
     card.className = "card"; card.id = "card-" + k;
     card.innerHTML = `<div class="card-head"><span class="card-name">${LABEL[k]}
-      <span class="info" title="${esc(S.config.definitions[k])}">i</span><span class="changed" hidden>changed</span></span></div>
+      <span class="info" title="${esc(S.config.definitions[k])}">i</span><span class="changed" hidden>changed</span><span class="missing-tag" hidden>AI: no answer</span></span></div>
       <div class="reason"></div><div class="evs"></div>`;
     card.querySelector(".card-head").appendChild(segButtons(["Yes", "No", "N/A"], k));
     card.onmouseenter = () => setActive(k);
@@ -418,11 +427,24 @@ function paint() {
   });
   S.config.items.forEach((k) => {
     const card = $("card-" + k), r = card.querySelector(".reason"), sg = suggested(k);
+    const missing = aiMissing(k);
     card.querySelector(".changed").hidden = !(sg && S.form[k] && S.form[k] !== sg);
+    card.querySelector(".missing-tag").hidden = !missing;
+    card.classList.toggle("ai-missing", missing);
+    card.classList.toggle("answered", missing && !!S.form[k]);
     if (loading) { r.innerHTML = `<div class="skeleton" style="width:80%"></div>`; card.querySelector(".evs").innerHTML = ""; return; }
     const reason = s?.checklist?.[k]?.reason;
-    r.innerHTML = reason ? `<span class="ai">AI</span> ${esc(reason)}` : "";
+    r.innerHTML = missing
+      ? `<span class="miss">AI couldn't determine this — please answer manually.</span>${reason ? ` <span class="ai">AI</span> ${esc(reason)}` : ""}`
+      : (reason ? `<span class="ai">AI</span> ${esc(reason)}` : "");
     evChips(card.querySelector(".evs"), evidenceFor(k));
+  });
+  ["sentiment", "outcome"].forEach((k) => {
+    const missing = aiMissing(k);
+    $(k + "-field").classList.toggle("ai-missing", missing);
+    $(k + "-field").classList.toggle("answered", missing && !!S.form[k]);
+    $(k + "-missing").hidden = !missing;
+    $(k + "-miss").hidden = !missing || !!S.form[k];
   });
   evChips($("sentiment-ev"), evidenceFor("sentiment"));
   evChips($("outcome-ev"), evidenceFor("outcome"));
@@ -432,6 +454,12 @@ function paint() {
   renderBanner(); renderSummary(); renderTips(); highlight();
 }
 
+function aiMissing(key) {
+  // True when an analysis exists but the AI gave no valid answer for this field.
+  const s = sugg();
+  return !!(s && s.checklist) && !suggested(key);
+}
+
 function renderBanner() {
   const s = sugg(), c = call(), reason = aiBlocked(c);
   let html = "";
@@ -439,7 +467,14 @@ function renderBanner() {
   else if (!S.config.llm.model) html = `<div class="banner">No LLM configured. Add GROQ_API_KEY to .env and restart.</div>`;
   else if (s && s.error) html = `<div class="banner err">AI analysis failed: ${esc(s.error)} <button class="btn" style="padding:2px 8px;margin-left:6px" onclick="analyze(false)">Retry</button></div>`;
   else if (!s) html = `<div class="banner hint">Press <b>Analyze</b> (top right) for AI suggestions, evidence and coaching tips.</div>`;
-  else if (s && s.checklist && s.evidence_check?.dropped) html = `<div class="banner">${s.evidence_check.dropped} AI quote(s) didn't match the transcript and were hidden.</div>`;
+  else if (s && s.checklist) {
+    const keys = [...S.config.items, "sentiment", "outcome"].filter(aiMissing);
+    if (keys.length) {
+      const names = keys.map((k) => LABEL[k] || (k === "sentiment" ? "Caller sentiment" : "Call outcome"));
+      html += `<div class="banner err-soft">AI couldn't answer ${keys.length} item${keys.length > 1 ? "s" : ""} (${esc(names.join(", "))}). They're highlighted in red: please answer them manually.</div>`;
+    }
+    if (s.evidence_check?.dropped) html += `<div class="banner">${s.evidence_check.dropped} AI quote(s) didn't match the transcript and were hidden.</div>`;
+  }
   $("banner").innerHTML = html;
 }
 
