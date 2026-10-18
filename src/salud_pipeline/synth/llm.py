@@ -34,6 +34,13 @@ BEHAVIOR = {
 }
 
 
+def _ending(call: dict) -> str:
+    """The planted outcome in the same words the QA prompt uses to define it."""
+    from ..qa.targets import _OUTCOME_MAP, OUTCOME_DEFINITIONS
+    key = "hung_up" if call["hung_up"] else _OUTCOME_MAP.get(call["true_result"], "non_committal")
+    return OUTCOME_DEFINITIONS[key]
+
+
 def build_prompt(call: dict) -> str:
     """Prompt that pins every planted label the transcript must express."""
     behaviors = "\n".join(
@@ -46,8 +53,8 @@ def build_prompt(call: dict) -> str:
 Setting: US hospital patient billing office (healthcare revenue cycle). Direction: {call['direction'].replace('_', ' ')}.
 Caller's situation: {call['scenario'].replace('_', ' ')}. Open balance discussed: ${call['total_balance_discussed']:,.2f}.
 Caller mood: {call['sentiment_label']}. Language preference: {call['language']}.
-How the call ends: {call['true_result'].replace('_', ' ')}{' (caller hangs up)' if call['hung_up'] else ''}.
-{f"Promised payment date: {call['promise_date']}." if call.get('promise_date') else ''}
+How the call ends: {_ending(call)}
+{f"Promised payment date: {call['promise_date']}." if isinstance(call.get('promise_date'), str) and call['promise_date'] else ''}
 
 The agent MUST show exactly these behaviors:
 {behaviors}

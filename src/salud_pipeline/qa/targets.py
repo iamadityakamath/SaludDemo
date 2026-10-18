@@ -38,6 +38,28 @@ ITEM_DEFINITIONS = {
                   "or balance information, and does not disclose to unverified third parties.",
 }
 
+# How a call ends. One label per call; when several fit, use the first in OUTCOME_PRECEDENCE.
+OUTCOME_DEFINITIONS = {
+    "hung_up": "The caller disconnected before the call reached a resolution.",
+    "payment_plan": "A payment plan (recurring installments) was set up or changed on this call, even if the first "
+                    "installment was taken today.",
+    "paid": "The caller made a one-time payment (full or partial) during this call, with no payment plan set up.",
+    "promise_to_pay": "No money was taken and no plan was set up, but the caller committed to pay a specific amount or "
+                      "on a specific date or timeframe later.",
+    "insurance_followup": "The resolution is to pursue insurance: a claim review or re-bill was requested, or the caller "
+                          "was told to contact their insurer before paying.",
+    "refused_or_disputed": "The caller said they will not pay, or disputed the balance or charges, without committing to pay.",
+    "transferred": "The call was handed to another department, provider or person before resolution "
+                   "(including insurance-representative calls routed elsewhere).",
+    "non_committal": "Balance discussed but the caller made no commitment (e.g. 'I'll think about it', 'I'll see').",
+}
+OUTCOME_PRECEDENCE = ["hung_up", "payment_plan", "paid", "promise_to_pay", "insurance_followup",
+                      "refused_or_disputed", "transferred", "non_committal"]
+# Coarse groups for Stage 2: did money move, was there a commitment, or neither.
+OUTCOME_GROUPS = {"paid": "paid_or_plan", "payment_plan": "paid_or_plan", "promise_to_pay": "promise",
+                  "non_committal": "no_commitment", "refused_or_disputed": "no_commitment",
+                  "insurance_followup": "no_commitment", "transferred": "no_commitment", "hung_up": "no_commitment"}
+
 _OUTCOME_MAP = {
     "paid_guarantor_full": "paid", "paid_account_full": "paid", "partial_payment": "paid",
     "paid_plan_full": "payment_plan", "promised_to_pay": "promise_to_pay",

@@ -1,9 +1,8 @@
 import pandas as pd
 import pytest
 
-from salud_pipeline.qa.evaluate import consensus, inter_rater, score_table
-from salud_pipeline.qa.ml_scorer import MLScorer
-from salud_pipeline.qa.targets import TARGETS, TRANSCRIPT_ITEMS, load_synthetic
+from salud_pipeline.qa.evaluate import agreement_table, cohen_kappa, consensus, inter_rater
+from salud_pipeline.qa.targets import TARGETS, load_synthetic
 from salud_pipeline.synth.cli import main as synth_main
 
 
@@ -20,22 +19,29 @@ def test_load_synthetic_has_every_target(synthetic):
     assert not synthetic["text"].str.contains("Editorial note").any()
 
 
-def test_ml_scorer_beats_majority_on_synthetic(synthetic):
-    train, test = synthetic.iloc[:300], synthetic.iloc[300:]
-    st = score_table(test, MLScorer().fit(train).predict(test)).set_index("target")
-    assert (st.loc["compliance", "accuracy"] > st.loc["compliance", "majority_baseline"])
+def test_cohen_kappa_matches_hand_calculation():
+    # 10 pairs: po = 0.8; a has 6 Yes/4 No, b has 6 Yes/4 No -> pe = .36 + .16 = .52 -> kappa = .28/.48
+    a = ["Yes"] * 5 + ["No"] * 3 + ["Yes", "No"]
+    b = ["Yes"] * 5 + ["No"] * 3 + ["No", "Yes"]
+    assert cohen_kappa(a, b) == pytest.approx(0.28 / 0.48)
+    assert cohen_kappa(["Yes", "No"], ["Yes", "No"]) == pytest.approx(1.0)
 
 
-def test_score_table_skips_na_and_counts_missing_as_wrong():
-    truth = pd.DataFrame({"contact_id": ["a", "b", "c"], "greeting": ["Yes", "N/A", "No"]})
-    pred = pd.DataFrame({"contact_id": ["a", "b", "c"], "greeting": ["Yes", "No", None]})
-    row = score_table(truth, pred, targets=["greeting"]).iloc[0]
-    assert row["n"] == 2 and row["accuracy"] == 0.5 and row["coverage"] == 0.5
+def test_agreement_counts_na_as_an_answer_and_missing_as_wrong():
+    truth = pd.DataFrame({"call_id": ["a", "b", "c", "d"], "greeting": ["Yes", "N/A", "No", ""]})
+    pred = pd.DataFrame({"call_id": ["a", "b", "c", "d"], "greeting": ["Yes", "Yes", None, "Yes"]})
+    row = agreement_table(truth, pred, targets=["greeting"]).iloc[0]
+    assert row["n"] == 3                      # blank human tag excluded
+    assert row["agreement"] == pytest.approx(1 / 3)
+    assert row["pred_missing"] == 1
+    assert row["ci_low"] <= row["agreement"] <= row["ci_high"]
 
 
 def test_inter_rater_and_consensus():
-    gt = pd.DataFrame({"contact_id": ["a", "a", "b", "b"], "rater": ["X", "Y", "X", "Y"],
-                       "text": ["t", "t", "u", "u"], "greeting": ["Yes", "Yes", "No", "Yes"]})
+    gt = pd.DataFrame({"call_id": ["a", "a", "b", "b"], "rater": ["X", "Y", "X", "Y"],
+                       "greeting": ["Yes", "Yes", "No", "Yes"]})
     irr = inter_rater(gt, targets=["greeting"]).iloc[0]
     assert irr["agreement"] == 0.5
-    assert consensus(gt, targets=["greeting"]).set_index("contact_id").loc["a", "greeting"] == "Yes"
+    cons = consensus(gt, targets=["greeting"]).set_index("call_id")
+    assert cons.loc["a", "greeting"] == "Yes"
+    assert pd.isna(cons.loc["b", "greeting"])  # raters split: no consensus

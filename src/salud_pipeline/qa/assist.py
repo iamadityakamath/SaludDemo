@@ -15,9 +15,9 @@ from datetime import datetime
 from pathlib import Path
 
 from ..llm_client import LLMEndpoint
-from .targets import ITEM_DEFINITIONS, OUTCOMES, SENTIMENTS, TRANSCRIPT_ITEMS
+from .targets import ITEM_DEFINITIONS, OUTCOME_DEFINITIONS, OUTCOME_PRECEDENCE, OUTCOMES, SENTIMENTS, TRANSCRIPT_ITEMS
 
-PROMPT_VERSION = "assist-v1"
+PROMPT_VERSION = "assist-v2"  # v2: precise outcome definitions
 ANSWERS = ("Yes", "No", "N/A")
 
 SYSTEM = (
@@ -42,6 +42,7 @@ def split_turns(text: str) -> list[dict]:
 
 def build_prompt(turns: list[dict]) -> str:
     items = "\n".join(f'  "{k}": {d}' for k, d in ITEM_DEFINITIONS.items())
+    outcomes = "\n".join(f'  "{k}": {OUTCOME_DEFINITIONS[k]}' for k in OUTCOME_PRECEDENCE)
     numbered = "\n".join(f"[T{t['n']}] {t['speaker']}: {t['text']}" for t in turns)
     return f"""Review this call and return ONE JSON object.
 
@@ -58,11 +59,14 @@ For every checklist item give:
 
 Also return:
 - "sentiment": {{"label": one of {SENTIMENTS}, "evidence": [...same format, caller turns...]}}
-- "outcome":   {{"label": one of {OUTCOMES}, "evidence": [...]}}
+- "outcome":   {{"label": <one outcome key below>, "evidence": [...turns showing how the call ended...]}}
 - "summary": one sentence describing the call
 - "coaching": 1-4 tips for the agent, each {{"item": <checklist key or "general">, "tip": "<specific, actionable
   advice in second person>", "turn": <turn number it refers to>}}. Base tips on items answered "No" first.
   If the call was excellent, give one tip that reinforces what went well. Never recommend pressuring the caller.
+
+OUTCOME (how the call ended; if more than one fits, choose the one listed first):
+{outcomes}
 
 Shape:
 {{"checklist": {{"greeting": {{"answer": "Yes", "reason": "...", "evidence": [{{"turn": 2, "quote": "..."}}]}}, ...all 7 items...}},
