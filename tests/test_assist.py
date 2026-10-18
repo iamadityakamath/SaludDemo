@@ -116,7 +116,7 @@ def test_assistant_caches(llm_url, tmp_path):
     assert r1 == r2 and FakeLLM.calls == 1 and r1["coaching"][0]["tip"] == "Keep it up."
 
 
-def _tagger(tmp_path, endpoint, real, include_real=False):
+def _tagger(tmp_path, endpoint, real):
     tdir = tmp_path / "calls"
     tdir.mkdir(exist_ok=True)
     (tdir / "a.txt").write_text(TEXT)
@@ -125,7 +125,7 @@ def _tagger(tmp_path, endpoint, real, include_real=False):
     write_template(csv, tdir)
     key = "real" if real else "synthetic"
     httpd = serve([CallSource(key, key.title(), tdir, csv, real=real)], "AK", port=0, endpoint=endpoint,
-                  include_real=include_real, cache_dir=tmp_path / "cache")
+                  cache_dir=tmp_path / "cache")
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd, f"http://127.0.0.1:{httpd.server_port}", csv, key
 
@@ -179,14 +179,13 @@ def test_save_records_provenance(llm_url, tmp_path):
         httpd.shutdown()
 
 
-def test_real_calls_blocked_for_remote_llm(tmp_path):
-    remote = LLMEndpoint(base_url="https://api.groq.com/openai/v1", model="m", api_key="k")
-    httpd, url, _, key = _tagger(tmp_path, remote, real=True)
+def test_real_calls_analyzed_like_synthetic(llm_url, tmp_path):
+    httpd, url, _, key = _tagger(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=True)
     try:
-        info = _get(url + "/api/state")["config"]["llm"]
-        assert "--include-real" in info["real"]
-        assert "disabled" in _post(url, "/api/analyze", {"id": f"{key}/a.txt"})
-        assert _get(url + f"/api/analysis?id={key}/a.txt") == {"none": True}
+        assert _get(url + "/api/state")["config"]["llm"]["real"] is None
+        assert _get(url + f"/api/analysis?id={key}/a.txt") == {"none": True} and FakeLLM.calls == 0
+        assert _post(url, "/api/analyze", {"id": f"{key}/a.txt"})["checklist"]["greeting"]["answer"] == "Yes"
+        assert FakeLLM.calls == 1
     finally:
         httpd.shutdown()
 

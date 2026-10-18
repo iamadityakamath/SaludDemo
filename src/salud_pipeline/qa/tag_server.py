@@ -12,7 +12,9 @@ coaching tips. The LLM runs only when the rater presses Analyze; reopening an an
 shows the cached result. Saved rows record which model pre-filled them and which items the rater
 overrode.
 
-Real client transcripts are sent to a non-local LLM (e.g. Groq) only with include_real=True.
+Real and synthetic calls are analyzed the same way. Real calls are redacted, but Analyze still sends
+them to the configured LLM (e.g. Groq); the page asks the rater to confirm once per browser session
+before the first real call is sent to a non-local provider.
 """
 
 from __future__ import annotations
@@ -125,11 +127,10 @@ class LabelStore:
 
 
 class Suggester:
-    """CallAssistant plus the per-call real-data guard. Never calls the LLM unless asked."""
+    """CallAssistant with single-flight requests. Never calls the LLM unless asked."""
 
-    def __init__(self, endpoint: LLMEndpoint | None, cache_dir: Path, include_real: bool):
+    def __init__(self, endpoint: LLMEndpoint | None, cache_dir: Path):
         self.endpoint = endpoint
-        self.include_real = include_real
         self.assistant = CallAssistant(endpoint, cache_dir) if endpoint and endpoint.model else None
         self._inflight: dict[str, threading.Event] = {}
         self._lock = threading.Lock()
@@ -137,14 +138,12 @@ class Suggester:
     def blocked_reason(self, real: bool) -> str | None:
         if self.assistant is None:
             return "No LLM configured. Add GROQ_API_KEY to .env and restart."
-        if real and not self.endpoint.is_local and not self.include_real:
-            return (f"AI suggestions are off for real calls: {self.endpoint.provider} is outside the approved "
-                    "environment. Restart with --include-real once Salud approves it.")
         return None
 
     def info(self) -> dict:
         base = {"model": self.endpoint.model if self.assistant else None,
-                "provider": self.endpoint.provider if self.assistant else None}
+                "provider": self.endpoint.provider if self.assistant else None,
+                "remote": bool(self.assistant) and not self.endpoint.is_local}
         return base | {"real": self.blocked_reason(True), "synthetic": self.blocked_reason(False)}
 
     def cached(self, text: str, real: bool) -> dict | None:
@@ -260,7 +259,7 @@ def make_handler(store: LabelStore, rater: str, suggester: Suggester):
 
 
 def serve(sources: list[CallSource], rater: str, port: int = 8765, endpoint: LLMEndpoint | None = None,
-          include_real: bool = False, cache_dir: Path | None = None) -> ThreadingHTTPServer:
+          cache_dir: Path | None = None) -> ThreadingHTTPServer:
     store = LabelStore([s for s in sources if s.transcripts_dir.exists()])
-    suggester = Suggester(endpoint, cache_dir or REPO_ROOT / "reports" / "qa" / "assist_cache", include_real)
+    suggester = Suggester(endpoint, cache_dir or REPO_ROOT / "reports" / "qa" / "assist_cache")
     return ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, rater, suggester))

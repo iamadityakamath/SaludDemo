@@ -531,9 +531,20 @@ async function loadCached(id) {
   }
 }
 
+function realAck() {
+  // Real calls are redacted client data. Ask once per browser session before sending one to a cloud LLM.
+  try { if (sessionStorage.getItem("qa-real-ack") === "1") return true; } catch (e) {}
+  const { provider, model } = S.config.llm;
+  const ok = confirm(`This is a real (redacted) Salud call.\n\nAnalyze will send its transcript to ${provider} (${model}), ` +
+    `a third-party cloud service. Only continue if this is approved for client data.\n\nYou won't be asked again this session.`);
+  if (ok) { try { sessionStorage.setItem("qa-real-ack", "1"); } catch (e) {} }
+  return ok;
+}
+
 async function analyze() {
   const id = S.cur, c = call();
   if (!c || !S.config.llm.model || aiBlocked(c) || (S.sugg[id] && S.sugg[id].loading)) return;
+  if (c.source === "real" && S.config.llm.remote && !realAck()) return;
   const force = !!(S.sugg[id] && S.sugg[id].checklist);   // Re-analyze bypasses the cache
   S.sugg[id] = { loading: true }; setAiChip("loading"); setAnalyze(); paint();
   let res;

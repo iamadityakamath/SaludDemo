@@ -87,7 +87,7 @@ cp .env.example .env        # then set GROQ_API_KEY=...
 
 With only `GROQ_API_KEY` set, everything uses Groq at `https://api.groq.com/openai/v1` with `GROQ_MODEL` (default `openai/gpt-oss-120b`). To use a team or self-hosted OpenAI-compatible server instead, set `SALUD_LLM_BASE_URL`, `SALUD_LLM_MODEL` and `SALUD_LLM_API_KEY`. Real environment variables override `.env`.
 
-**Real calls stay local by default.** Groq is a third-party cloud service, and the brief requires real call data to stay inside a HIPAA-compliant environment. Synthetic calls can go to Groq freely. The 10 real redacted calls are sent to a non-local LLM only with `--include-real`; use it only after Salud approves. The review page applies this per call: real calls show "AI off for real calls", synthetic calls get suggestions.
+**Real calls and Groq.** On the review page, real and synthetic calls work the same way: **Analyze** sends the transcript to the configured LLM. Groq is a third-party cloud service, and the brief requires real call data to stay inside a HIPAA-compliant environment. The real calls are redacted, but confirm with Salud that sending them to Groq is acceptable. The first time you analyze a real call in a browser session, the page asks you to confirm. The batch scorer (`salud-qa llm`) still skips real calls on a non-local LLM unless you pass `--include-real`.
 
 ## QA scoring (Phase 4)
 
@@ -104,8 +104,7 @@ Every scorer predicts the same targets: the 7 checklist items that are visible i
 **Review page.** `salud-qa tag` opens one local review page at http://127.0.0.1:8765 listing every call: the 10 real calls first, then the synthetic run (`--run`, default `data/synthetic/run_default`). It only listens on this machine.
 
 ```bash
-.venv/bin/salud-qa tag --rater AK                  # AI on for synthetic calls, off for real calls
-.venv/bin/salud-qa tag --rater AK --include-real   # also AI on real calls (only after Salud approves Groq)
+.venv/bin/salud-qa tag --rater AK      # every call, real and synthetic, in one page
 ```
 
 - **Filters.** The Calls panel filters by source (All, Real, Synthetic, with counts), by status (not tagged, in progress, tagged), and by call-ID search. Prev / Save & next move through the filtered list. Your filter choice is remembered in the browser.

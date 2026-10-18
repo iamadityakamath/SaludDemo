@@ -32,9 +32,8 @@ def setup(tmp_path):
                CallSource("synthetic", "Synthetic", syn_dir, syn_csv, real=False)]
     servers = []
 
-    def start(rater, endpoint=None, include_real=False):
-        httpd = serve(sources, rater, port=0, endpoint=endpoint, include_real=include_real,
-                      cache_dir=tmp_path / "cache")
+    def start(rater, endpoint=None):
+        httpd = serve(sources, rater, port=0, endpoint=endpoint, cache_dir=tmp_path / "cache")
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         servers.append(httpd)
         return f"http://127.0.0.1:{httpd.server_port}"
@@ -97,13 +96,13 @@ def test_raters_are_blind_to_each_other(setup):
     assert sorted(df[df["file_id"] == "a.txt"]["rater"]) == ["AK", "RM"]
 
 
-def test_ai_guard_is_per_source(setup):
+def test_ai_available_for_both_sources(setup):
     start, *_ = setup
     remote = LLMEndpoint(base_url="https://api.groq.com/openai/v1", model="m", api_key="k")
     llm = _get(start("AK", endpoint=remote) + "/api/state")["config"]["llm"]
-    assert llm["synthetic"] is None and "--include-real" in llm["real"]
-    llm = _get(start("AK", endpoint=remote, include_real=True) + "/api/state")["config"]["llm"]
     assert llm["real"] is None and llm["synthetic"] is None
+    assert llm["remote"] is True and llm["provider"] == "Groq"  # the page confirms once before sending real calls
+    assert _get(start("AK") + "/api/state")["config"]["llm"]["real"].startswith("No LLM configured")
 
 
 @pytest.mark.parametrize("payload", [

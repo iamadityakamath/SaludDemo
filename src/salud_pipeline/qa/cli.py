@@ -79,7 +79,7 @@ def cmd_tag(args) -> None:
         sys.exit(f"No transcripts found in {REAL_DIR} or {args.run / 'transcripts'}")
     endpoint = None if args.no_llm else _endpoint(args)
     try:
-        httpd = serve(present, args.rater.strip(), args.port, endpoint=endpoint, include_real=args.include_real)
+        httpd = serve(present, args.rater.strip(), args.port, endpoint=endpoint)
     except OSError as e:
         if e.errno != 48 and "in use" not in str(e):
             raise
@@ -203,8 +203,6 @@ def main(argv: list[str] | None = None) -> int:
     tag.add_argument("--port", type=int, default=8765)
     tag.add_argument("--no-browser", action="store_true")
     tag.add_argument("--no-llm", action="store_true", help="tag without AI suggestions")
-    tag.add_argument("--include-real", action="store_true",
-                     help="allow sending real redacted calls to a non-local LLM (needs Salud approval)")
     tag.add_argument("--base-url", help="default: $SALUD_LLM_BASE_URL, Groq if GROQ_API_KEY is set")
     tag.add_argument("--model", help="default: $SALUD_LLM_MODEL / $GROQ_MODEL")
     ping = sub.add_parser("ping")
