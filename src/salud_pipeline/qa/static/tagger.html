@@ -20,7 +20,7 @@
   --radius: 10px;
 }
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+html, body { height: 100%; overflow-x: hidden; }
 body { margin: 0; background: var(--bg); color: var(--ink);
   font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
 button { font: inherit; color: inherit; }
@@ -109,7 +109,7 @@ mark.find { background: #fff1a8; color: inherit; }
 
 /* Checklist panel */
 aside { background: var(--panel); border-left: 1px solid var(--line); display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; }
-.scroll { overflow-y: auto; padding: 14px 16px 16px; }
+.scroll { overflow-y: auto; overflow-x: hidden; padding: 14px 16px 16px; }
 .section-title { display: flex; align-items: center; justify-content: space-between; margin: 2px 0 10px; }
 .section-title h2 { font-size: 13px; margin: 0; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
 .banner { font-size: 12px; padding: 8px 10px; border-radius: 8px; margin-bottom: 10px; background: var(--warn-soft); color: var(--warn); }
@@ -117,8 +117,10 @@ aside { background: var(--panel); border-left: 1px solid var(--line); display: g
 .card { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 8px; background: var(--panel); cursor: default; transition: border-color .15s, box-shadow .15s; }
 .card:hover, .card.active { border-color: color-mix(in srgb, var(--ai) 45%, var(--line)); }
 .card.active { box-shadow: var(--shadow); }
-.card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.card-name { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.card-name { font-weight: 600; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; min-width: 0; }
+.card { min-width: 0; }
+#transcript, nav, #list { overflow-x: hidden; }
 .info { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--line); color: var(--faint); font-size: 10px; display: inline-grid; place-items: center; cursor: help; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; background: var(--panel-2); }
 .seg button { position: relative; border: 0; background: none; padding: 4px 11px; font-size: 13px; cursor: pointer; }
@@ -134,13 +136,16 @@ aside { background: var(--panel); border-left: 1px solid var(--line); display: g
 .reason .ai { color: var(--ai); font-weight: 650; }
 .changed { font-size: 11px; color: var(--warn); background: var(--warn-soft); border-radius: 999px; padding: 1px 8px; }
 /* AI could not determine an answer: red until the rater answers, then a red badge remains. */
-.missing-tag { font-size: 11px; font-weight: 650; color: var(--no); background: var(--no-soft); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
-.card.ai-missing { border-color: var(--no); background: var(--no-soft); box-shadow: inset 3px 0 0 var(--no); }
-.card.ai-missing.answered { background: var(--panel); border-color: color-mix(in srgb, var(--no) 40%, var(--line)); box-shadow: inset 3px 0 0 color-mix(in srgb, var(--no) 55%, transparent); }
-.card.ai-missing .reason .miss { color: var(--no); font-weight: 600; }
-.field.ai-missing { border: 1px solid var(--no); background: var(--no-soft); border-radius: 8px; padding: 6px; box-shadow: inset 3px 0 0 var(--no); }
-.field.ai-missing.answered { background: transparent; border-color: color-mix(in srgb, var(--no) 40%, var(--line)); }
-.field .miss { color: var(--no); font-size: 12px; font-weight: 600; margin-top: 4px; }
+/* Needs review: the AI's answer has no supporting transcript text (or there is no AI answer).
+   Red until the rater picks an answer themself, then green. */
+.flag { font-size: 11px; font-weight: 650; border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.flag.need { color: var(--no); background: #fff; border: 1px solid color-mix(in srgb, var(--no) 45%, transparent); }
+.flag.done { color: var(--accent-hover); background: #fff; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
+.card.needs-review, .field.needs-review { background: #fdecea; border-color: #e8a59c; box-shadow: inset 4px 0 0 var(--no); }
+.card.checked, .field.checked { background: var(--yes-soft); border-color: #b9d99a; box-shadow: inset 4px 0 0 var(--accent); }
+.field { border: 1px solid transparent; border-radius: var(--radius); padding: 8px 10px; transition: background .2s, border-color .2s; }
+.reason .need-msg { color: var(--no); font-weight: 600; display: block; }
+.reason .done-msg { color: var(--accent-hover); font-weight: 600; display: block; }
 .banner.err-soft { background: var(--no-soft); color: var(--no); }
 .evs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .ev { border: 1px solid color-mix(in srgb, var(--ai) 30%, var(--line)); background: var(--ai-soft); color: var(--ink); border-radius: 6px;
@@ -228,12 +233,16 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; border: 1px solid v
         <div class="section-title"><h2>Checklist</h2><span class="status" id="legend"></span></div>
         <div id="banner"></div>
         <div id="items"></div>
-        <label class="block">Caller sentiment <span class="missing-tag" id="sentiment-missing" hidden>AI: no answer</span></label>
-        <div class="field" id="sentiment-field"><div id="sentiment"></div><div class="miss" id="sentiment-miss" hidden>AI couldn't determine this — please answer manually.</div></div>
+        <div class="field" id="sentiment-field">
+          <label class="block" style="margin-top:0">Caller sentiment <span class="flag" id="sentiment-flag" hidden></span></label>
+          <div id="sentiment"></div><div class="reason" id="sentiment-msg"></div>
         <div class="evs" id="sentiment-ev"></div>
-        <label class="block" for="outcome">Call outcome <span class="missing-tag" id="outcome-missing" hidden>AI: no answer</span></label>
-        <div class="field" id="outcome-field"><select id="outcome"></select><div class="miss" id="outcome-miss" hidden>AI couldn't determine this — please answer manually.</div></div>
+        </div>
+        <div class="field" id="outcome-field">
+          <label class="block" for="outcome" style="margin-top:0">Call outcome <span class="flag" id="outcome-flag" hidden></span></label>
+          <select id="outcome"></select><div class="reason" id="outcome-msg"></div>
         <div class="evs" id="outcome-ev"></div>
+        </div>
         <label class="block" for="notes">Notes</label>
         <textarea id="notes" placeholder="Anything ambiguous: why N/A, garbled audio, disagreement with AI…"></textarea>
       </div>
@@ -250,7 +259,7 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; border: 1px solid v
 const $ = (id) => document.getElementById(id);
 const S = {
   config: null, calls: [], byId: {}, labels: {}, sugg: {}, text: {},
-  cur: null, view: [], form: {}, dirty: false, active: null, activeSticky: false,
+  cur: null, view: [], form: {}, touched: new Set(), dirty: false, active: null, activeSticky: false,
   filter: { source: "all", status: "all", q: "" },
 };
 const LABEL = {
@@ -353,7 +362,7 @@ function segButtons(values, key, wide) {
   values.forEach((v) => {
     const b = document.createElement("button");
     b.type = "button"; b.dataset.k = key; b.dataset.v = v; b.textContent = v;
-    b.onclick = (e) => { e.stopPropagation(); S.form[key] = S.form[key] === v ? "" : v; markDirty(); paint(); };
+    b.onclick = (e) => { e.stopPropagation(); S.form[key] = S.form[key] === v ? "" : v; S.touched.add(key); markDirty(); paint(); };
     wrap.appendChild(b);
   });
   return wrap;
@@ -364,7 +373,7 @@ function buildForm() {
     const card = document.createElement("div");
     card.className = "card"; card.id = "card-" + k;
     card.innerHTML = `<div class="card-head"><span class="card-name">${LABEL[k]}
-      <span class="info" title="${esc(S.config.definitions[k])}">i</span><span class="changed" hidden>changed</span><span class="missing-tag" hidden>AI: no answer</span></span></div>
+      <span class="info" title="${esc(S.config.definitions[k])}">i</span><span class="changed" hidden>changed</span><span class="flag" hidden></span></span></div>
       <div class="reason"></div><div class="evs"></div>`;
     card.querySelector(".card-head").appendChild(segButtons(["Yes", "No", "N/A"], k));
     card.onmouseenter = () => setActive(k);
@@ -374,7 +383,7 @@ function buildForm() {
   $("sentiment").appendChild(segButtons(S.config.sentiments, "sentiment", true));
   const o = $("outcome");
   o.innerHTML = `<option value="">Select…</option>` + S.config.outcomes.map((x) => `<option value="${x}">${x.replaceAll("_", " ")}</option>`).join("");
-  o.onchange = () => { S.form.outcome = o.value; markDirty(); paint(); };
+  o.onchange = () => { S.form.outcome = o.value; S.touched.add("outcome"); markDirty(); paint(); };
   $("notes").oninput = () => { S.form.notes = $("notes").value; markDirty(); };
 }
 
@@ -427,24 +436,18 @@ function paint() {
   });
   S.config.items.forEach((k) => {
     const card = $("card-" + k), r = card.querySelector(".reason"), sg = suggested(k);
-    const missing = aiMissing(k);
     card.querySelector(".changed").hidden = !(sg && S.form[k] && S.form[k] !== sg);
-    card.querySelector(".missing-tag").hidden = !missing;
-    card.classList.toggle("ai-missing", missing);
-    card.classList.toggle("answered", missing && !!S.form[k]);
+    const st = reviewState(k);
+    setFlag(card, card.querySelector(".flag"), k, st);
     if (loading) { r.innerHTML = `<div class="skeleton" style="width:80%"></div>`; card.querySelector(".evs").innerHTML = ""; return; }
     const reason = s?.checklist?.[k]?.reason;
-    r.innerHTML = missing
-      ? `<span class="miss">AI couldn't determine this — please answer manually.</span>${reason ? ` <span class="ai">AI</span> ${esc(reason)}` : ""}`
-      : (reason ? `<span class="ai">AI</span> ${esc(reason)}` : "");
+    r.innerHTML = reviewMsg(k, st) + (reason ? `<span class="ai">AI</span> ${esc(reason)}` : "");
     evChips(card.querySelector(".evs"), evidenceFor(k));
   });
   ["sentiment", "outcome"].forEach((k) => {
-    const missing = aiMissing(k);
-    $(k + "-field").classList.toggle("ai-missing", missing);
-    $(k + "-field").classList.toggle("answered", missing && !!S.form[k]);
-    $(k + "-missing").hidden = !missing;
-    $(k + "-miss").hidden = !missing || !!S.form[k];
+    const st = loading ? "" : reviewState(k);
+    setFlag($(k + "-field"), $(k + "-flag"), k, st);
+    $(k + "-msg").innerHTML = reviewMsg(k, st);
   });
   evChips($("sentiment-ev"), evidenceFor("sentiment"));
   evChips($("outcome-ev"), evidenceFor("outcome"));
@@ -454,10 +457,33 @@ function paint() {
   renderBanner(); renderSummary(); renderTips(); highlight();
 }
 
-function aiMissing(key) {
-  // True when an analysis exists but the AI gave no valid answer for this field.
+function needsReview(key) {
+  // The AI analysed the call but gave no answer, or gave one with no supporting transcript text.
   const s = sugg();
-  return !!(s && s.checklist) && !suggested(key);
+  return !!(s && s.checklist) && (!suggested(key) || evidenceFor(key).length === 0);
+}
+
+function reviewState(key) {
+  // "need": red until the rater decides; "done": rater picked an answer (now or in an earlier save).
+  if (!needsReview(key)) return "";
+  const saved = S.labels[S.cur] && S.labels[S.cur][key];
+  return (S.touched.has(key) || saved) && S.form[key] ? "done" : "need";
+}
+
+function setFlag(box, flag, key, st) {
+  box.classList.toggle("needs-review", st === "need");
+  box.classList.toggle("checked", st === "done");
+  flag.hidden = !st;
+  flag.className = "flag " + st;
+  flag.textContent = st === "done" ? "Checked by you ✓" : (suggested(key) ? "No evidence" : "AI: no answer");
+}
+
+function reviewMsg(key, st) {
+  if (st === "need") return `<span class="need-msg">${suggested(key)
+    ? "No supporting text in the transcript — please check and choose an answer."
+    : "AI couldn't determine this — please choose an answer."}</span>`;
+  if (st === "done") return `<span class="done-msg">You reviewed this answer.</span>`;
+  return "";
 }
 
 function renderBanner() {
@@ -468,10 +494,10 @@ function renderBanner() {
   else if (s && s.error) html = `<div class="banner err">AI analysis failed: ${esc(s.error)} <button class="btn" style="padding:2px 8px;margin-left:6px" onclick="analyze(false)">Retry</button></div>`;
   else if (!s) html = `<div class="banner hint">Press <b>Analyze</b> (top right) for AI suggestions, evidence and coaching tips.</div>`;
   else if (s && s.checklist) {
-    const keys = [...S.config.items, "sentiment", "outcome"].filter(aiMissing);
+    const keys = [...S.config.items, "sentiment", "outcome"].filter((k) => reviewState(k) === "need");
     if (keys.length) {
       const names = keys.map((k) => LABEL[k] || (k === "sentiment" ? "Caller sentiment" : "Call outcome"));
-      html += `<div class="banner err-soft">AI couldn't answer ${keys.length} item${keys.length > 1 ? "s" : ""} (${esc(names.join(", "))}). They're highlighted in red: please answer them manually.</div>`;
+      html += `<div class="banner err-soft">${keys.length} item${keys.length > 1 ? "s" : ""} need${keys.length > 1 ? "" : "s"} your review: ${esc(names.join(", "))}. The AI found no supporting text, so they're shown in red until you choose an answer.</div>`;
     }
     if (s.evidence_check?.dropped) html += `<div class="banner">${s.evidence_check.dropped} AI quote(s) didn't match the transcript and were hidden.</div>`;
   }
@@ -606,7 +632,7 @@ function applySuggestion(id, announce) {
 
 /* ---------- navigation & saving ---------- */
 async function show(id) {
-  S.cur = id; S.active = null; S.activeSticky = false;
+  S.cur = id; S.active = null; S.activeSticky = false; S.touched = new Set();
   const c = call();
   S.form = { ...(S.labels[id] || {}) };
   S.dirty = false;
