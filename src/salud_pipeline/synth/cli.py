@@ -17,6 +17,7 @@ import argparse
 import json
 import sqlite3
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -44,17 +45,36 @@ def _write_transcripts(calls: pd.DataFrame, out: Path, cfg: GeneratorConfig, mod
             fh.write(json.dumps(prompt_record(call)) + "\n")
     if mode == "none":
         return 0
-    n = 0
-    for call in records:
-        if mode == "llm":
-            if limit is not None and n >= limit:
-                break
+    if mode == "template":
+        for call in records:
+            (tdir / f"{call['contact_id']}.txt").write_text(render_template(call, rng, cfg.transcript_noise))
+        return len(records)
+
+    # LLM mode: a fixed random order (so a run can stop and resume), written to llm_order.txt.
+    # Downstream evaluation takes the first N of this order as its test set.
+    order = np.random.default_rng(cfg.seed + 2).permutation(len(records))
+    chosen = [records[i] for i in order[: limit or len(records)]]
+    (out / "llm_order.txt").write_text("\n".join(c["contact_id"] for c in chosen) + "\n")
+    header = (f"Editorial note: Synthetic call written by {endpoint.model} from planted labels. "
+              "Fictional dialogue; no real person, account or recording.")
+    done = failed = 0
+    t0 = time.time()
+    for k, call in enumerate(chosen, 1):
+        path = tdir / f"{call['contact_id']}.txt"
+        if path.exists():
+            done += 1
+            continue
+        try:
             text = generate_with_endpoint(prompt_record(call)["prompt"], endpoint)
-        else:
-            text = render_template(call, rng, cfg.transcript_noise)
-        (tdir / f"{call['contact_id']}.txt").write_text(text)
-        n += 1
-    return n
+        except RuntimeError as e:
+            failed += 1
+            print(f"  [{k}/{len(chosen)}] skipped {call['contact_id'][:8]}: {e}", flush=True)
+            continue
+        path.write_text(header + "\n\n" + text + "\n")
+        done += 1
+        if k % 10 == 0 or k == len(chosen):
+            print(f"  [{k}/{len(chosen)}] written={done} failed={failed} ({(time.time() - t0) / 60:.1f} min)", flush=True)
+    return done
 
 
 def _summary(t: dict[str, pd.DataFrame]) -> dict:
@@ -109,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     endpoint = LLMEndpoint()
     endpoint.base_url = args.llm_base_url or endpoint.base_url
     endpoint.model = args.llm_model or endpoint.model
+    endpoint.max_retries = 8  # long batch runs: wait out rate-limit windows instead of failing
     n_tx = _write_transcripts(tables["truth_calls"], out, cfg, args.transcripts, endpoint, args.llm_limit)
 
     manifest = {

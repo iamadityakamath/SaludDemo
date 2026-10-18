@@ -102,10 +102,14 @@ class LLMEndpoint:
                 raise RuntimeError(f"Cannot reach LLM endpoint {self.base_url}: {e.reason}") from None
         raise RuntimeError("unreachable")
 
-    def chat(self, messages: list[dict], temperature: float = 0.0, json_mode: bool = False) -> str:
+    def chat(self, messages: list[dict], temperature: float = 0.0, json_mode: bool = False,
+             max_tokens: int | None = None) -> str:
+        """max_tokens matters on Groq: without it, the rate limiter reserves a large default per request."""
         if not self.model:
             raise ValueError("No model set: pass --model or set SALUD_LLM_MODEL / GROQ_MODEL")
         body = {"model": self.model, "temperature": temperature, "messages": messages}
+        if max_tokens:
+            body["max_tokens"] = max_tokens
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         return self._request("/chat/completions", body)["choices"][0]["message"]["content"]

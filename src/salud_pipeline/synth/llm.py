@@ -10,6 +10,8 @@ Phase 4, otherwise the LLM scorer is graded on its own writing style.
 
 from __future__ import annotations
 
+import re
+
 from .. import schema as S
 from ..llm_client import LLMEndpoint
 
@@ -56,7 +58,7 @@ Format rules:
 - Inbound calls start with an Automated System recording notice.
 - Never invent names, dates of birth, phone numbers, addresses or account numbers. Use tokens such as
   [REDACTED NAME], [REDACTED DOB RESPONSE], [REDACTED PHONE NUMBER], [REDACTED SERVICE DATE].
-- Natural speech with occasional fillers (um, uh), 12-30 turns. Output only the transcript."""
+- Natural speech with occasional fillers (um, uh), 10-20 turns, under 700 words. Output only the transcript."""
 
 
 def prompt_record(call: dict) -> dict:
@@ -65,5 +67,20 @@ def prompt_record(call: dict) -> dict:
             "sentiment_label": call["sentiment_label"], "true_result": call["true_result"]}
 
 
+def clean_generation(raw: str) -> str:
+    """Strip reasoning blocks, code fences and chatter around the transcript."""
+    text = re.sub(r"<think>.*?</think>", "", raw, flags=re.S | re.I)
+    text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text.strip(), flags=re.M)
+    lines = text.strip().splitlines()
+    first = next((i for i, ln in enumerate(lines) if re.match(r"^[A-Z][^:\n]{0,44}:\s", ln)), 0)
+    return "\n".join(lines[first:]).strip()
+
+
 def generate_with_endpoint(prompt: str, endpoint: LLMEndpoint, temperature: float = 0.8) -> str:
-    return endpoint.chat([{"role": "user", "content": prompt}], temperature=temperature).strip()
+    """One transcript; retried once if the model returns fewer than 6 speaker turns."""
+    for _ in range(2):
+        text = clean_generation(endpoint.chat([{"role": "user", "content": prompt}], temperature=temperature,
+                                              max_tokens=950))  # Groq free tier: 1,000 output tokens/min
+        if sum(1 for b in re.split(r"\n\s*\n", text) if re.match(r"^[^:\n]{1,45}:\s", b.strip())) >= 6:
+            return text
+    raise RuntimeError("model returned too few speaker turns")

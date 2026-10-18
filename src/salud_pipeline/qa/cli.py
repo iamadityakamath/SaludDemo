@@ -28,11 +28,12 @@ from ..schema import REPO_ROOT
 from .evaluate import bootstrap_accuracy_ci, consensus, inter_rater, score_table
 from .llm_scorer import LLMScorer
 from .ml_scorer import MLScorer
-from .targets import TARGETS, load_ground_truth, load_synthetic, write_template
+from .targets import TARGETS, TRANSCRIPT_ITEMS, load_ground_truth, load_synthetic, write_template
 
 REAL_DIR = REPO_ROOT / "data" / "Redacted Transcripts with Inferred Speakers"
 GT_CSV = REPO_ROOT / "data" / "ground_truth" / "real_calls_labels.csv"
 REPORTS = REPO_ROOT / "reports" / "qa"
+ASSIST_CACHE = REPORTS / "assist_cache"   # shared by the review page and batch scoring
 SIZES = [25, 50, 100, 200, 500, 1000, 2000]
 
 
@@ -147,8 +148,9 @@ def cmd_llm(args) -> None:
     ep = _endpoint(args)
     if not ep.model:
         sys.exit("No model: pass --model or set SALUD_LLM_MODEL (run `salud-qa ping` to list models)")
+    ep.max_retries = 8  # long batch runs: wait out rate-limit windows instead of failing
     tag = ep.model.replace(":", "_").replace("/", "_")
-    scorer = LLMScorer(ep, REPORTS / f"llm_cache_{tag}.jsonl")
+    scorer = LLMScorer(ep, ASSIST_CACHE)
     data = load_synthetic(args.run)
     _, test = split(data, 0.25, args.seed)
     test = test.head(args.n)
@@ -171,6 +173,72 @@ def cmd_llm(args) -> None:
         real = score_table(gt, rp)
         real.to_csv(REPORTS / f"llm_{tag}_real_calls.csv", index=False)
         print(real.round(3).to_string(index=False))
+
+
+def cmd_compare(args) -> None:
+    from . import compare as C
+
+    test, train = C.load_llm_split(args.llm_run, args.test_n)
+    if len(test) < args.test_n:
+        print(f"Note: only {len(test)} of {args.test_n} test calls are written so far.")
+    print(f"Test: {len(test)} LLM-written calls. ML training pool: {len(train)} LLM-written calls.")
+    out = REPORTS / "comparison"
+    out.mkdir(parents=True, exist_ok=True)
+    results, preds = [], {}
+
+    preds["Majority"] = C.majority(train if len(train) else test, test)
+    if len(train) >= 25:
+        preds[f"ML (LLM calls, n={len(train)})"] = MLScorer().fit(train).predict(test)
+    template = load_synthetic(args.template_run)
+    template = template[~template["contact_id"].isin(set(test["contact_id"]))]
+    preds[f"ML (template, n={len(template)})"] = MLScorer().fit(template).predict(test)
+
+    if not args.no_llm:
+        ep = _endpoint(args)
+        if not ep.model:
+            sys.exit("No model: set GROQ_API_KEY / SALUD_LLM_MODEL, or pass --no-llm")
+        ep.max_retries = 8
+        print(f"LLM {ep.model}: scoring {len(test)} test calls (cached calls are free)")
+        llm_pred = LLMScorer(ep, ASSIST_CACHE).predict(test)
+        llm_pred.to_csv(out / "llm_predictions.csv", index=False)
+        preds[f"LLM ({ep.model})"] = llm_pred
+        ev = llm_pred[[f"{k}_n_evidence" for k in TRANSCRIPT_ITEMS]]
+        evidence = {"calls_failed": int(llm_pred["error"].notna().sum()),
+                    "answers_with_verified_quote": float((ev > 0).to_numpy().mean()),
+                    "quotes_dropped_per_call": float(llm_pred["quotes_dropped"].fillna(0).mean())}
+    else:
+        evidence = None
+
+    for name, pred in preds.items():
+        results.append(C.evaluate(test, pred, name))
+    results = pd.concat(results)
+    results.to_csv(out / "results.csv", index=False)
+
+    sizes = [s for s in (25, 50, 100, 150, 200) if s < len(train)] + ([len(train)] if len(train) >= 25 else [])
+    curve = C.learning_curve(train, test, sizes, args.reps) if sizes else pd.DataFrame()
+    if len(curve):
+        curve.to_csv(out / "ml_learning_curve.csv", index=False)
+
+    acc = C.summary_table(results, "accuracy")
+    kap = C.summary_table(results, "kappa")
+    lines = [f"# LLM vs traditional ML: call QA scoring",
+             "",
+             f"Test set: {len(test)} LLM-written synthetic calls (`{args.llm_run.name}`), scored against planted labels.",
+             f"95% bootstrap confidence intervals in brackets.",
+             "", "## Accuracy", "", C.to_markdown(acc), "", "## Cohen's kappa (agreement beyond chance)", "",
+             C.to_markdown(kap)]
+    if len(curve):
+        lc = curve[curve["target"].isin(TRANSCRIPT_ITEMS)].groupby("train_size")["mean"].mean()
+        lines += ["", "## ML learning curve (checklist-average accuracy on the same test set)", "",
+                  "| training calls | accuracy |", "|---|---|"] + [f"| {n} | {v:.2f} |" for n, v in lc.items()]
+    if evidence:
+        lines += ["", "## LLM evidence quality", "",
+                  f"- Calls that failed: {evidence['calls_failed']}",
+                  f"- Checklist answers backed by a verified transcript quote: {evidence['answers_with_verified_quote']:.0%}",
+                  f"- Quotes dropped per call (not found in transcript): {evidence['quotes_dropped_per_call']:.2f}"]
+    (out / "comparison.md").write_text("\n".join(lines) + "\n")
+    print("\n".join(lines))
+    print(f"\nSaved to {out}")
 
 
 def cmd_summary(args) -> None:
@@ -212,11 +280,19 @@ def main(argv: list[str] | None = None) -> int:
     sub.choices["llm"].add_argument("--n", type=int, default=150, help="synthetic test calls to score")
     sub.choices["llm"].add_argument("--include-real", action="store_true",
                                     help="also send the real redacted calls to a non-local endpoint")
+    cmp_ = sub.add_parser("compare", help="LLM vs ML on LLM-written synthetic calls")
+    cmp_.add_argument("--llm-run", type=Path, default=REPO_ROOT / "data" / "synthetic" / "run_llm")
+    cmp_.add_argument("--template-run", type=Path, default=REPO_ROOT / "data" / "synthetic" / "run_default")
+    cmp_.add_argument("--test-n", type=int, default=60)
+    cmp_.add_argument("--reps", type=int, default=5)
+    cmp_.add_argument("--no-llm", action="store_true", help="skip the LLM (ML and baselines only)")
+    cmp_.add_argument("--base-url")
+    cmp_.add_argument("--model")
     sub.add_parser("summary")
     args = ap.parse_args(argv)
     REPORTS.mkdir(parents=True, exist_ok=True)
     try:
-        {"template": cmd_template, "tag": cmd_tag, "ping": cmd_ping, "ml": cmd_ml, "llm": cmd_llm,
+        {"template": cmd_template, "tag": cmd_tag, "ping": cmd_ping, "ml": cmd_ml, "llm": cmd_llm, "compare": cmd_compare,
          "summary": cmd_summary}[args.cmd](args)
     except RuntimeError as e:
         sys.exit(f"Error: {e}")

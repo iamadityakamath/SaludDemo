@@ -9,8 +9,10 @@ from salud_pipeline.llm_client import LLMEndpoint
 from salud_pipeline.qa.llm_scorer import LLMScorer
 from salud_pipeline.qa.targets import TRANSCRIPT_ITEMS
 
-REPLY = {**{k: {"answer": "Yes", "evidence": "quote"} for k in TRANSCRIPT_ITEMS},
-         "sentiment": "neutral", "outcome": "paid"}
+REPLY = {"checklist": {k: {"answer": "Yes", "reason": "ok", "evidence": [{"turn": 1, "quote": "hi"}]}
+                       for k in TRANSCRIPT_ITEMS},
+         "sentiment": {"label": "neutral", "evidence": []}, "outcome": {"label": "paid", "evidence": []},
+         "summary": "s", "coaching": []}
 
 
 class FakeServer(BaseHTTPRequestHandler):
@@ -59,12 +61,13 @@ def test_endpoint_reads_env_and_sends_bearer_token(server, monkeypatch):
 
 
 def test_scorer_end_to_end_and_cache(server, tmp_path):
-    scorer = LLMScorer(LLMEndpoint(base_url=server, model="fake-model", api_key=None), tmp_path / "cache.jsonl")
-    df = pd.DataFrame({"contact_id": ["a", "b"], "text": ["Agent: hi", "Agent: hello"]})
+    scorer = LLMScorer(LLMEndpoint(base_url=server, model="fake-model", api_key=None), tmp_path / "cache")
+    df = pd.DataFrame({"contact_id": ["a", "b"], "text": ["Agent: hi", "Agent: hi there"]})
     pred = scorer.predict(df, progress=False)
     assert (pred["greeting"] == "Yes").all() and (pred["outcome"] == "paid").all()
+    assert (pred["greeting_n_evidence"] == 1).all() and pred["error"].isna().all()
     n = len(FakeServer.requests)
-    again = LLMScorer(LLMEndpoint(base_url=server, model="fake-model"), tmp_path / "cache.jsonl")
+    again = LLMScorer(LLMEndpoint(base_url=server, model="fake-model"), tmp_path / "cache")
     again.predict(df, progress=False)
     assert len(FakeServer.requests) == n  # served from the on-disk cache
 

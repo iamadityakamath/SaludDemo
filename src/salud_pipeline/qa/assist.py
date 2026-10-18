@@ -174,7 +174,7 @@ class CallAssistant:
         turns = split_turns(text)
         raw = self.endpoint.chat([{"role": "system", "content": SYSTEM},
                                   {"role": "user", "content": build_prompt(turns)}],
-                                 temperature=0.0, json_mode=True)
+                                 temperature=0.0, json_mode=True, max_tokens=3500)
         result = parse(raw, turns) | {"model": self.endpoint.model, "provider": self.endpoint.provider,
                                       "analyzed_at": datetime.now().isoformat(timespec="seconds")}
         if result["ok"]:

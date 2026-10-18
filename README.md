@@ -10,7 +10,7 @@ One connected pipeline: **call transcript → QA / sentiment scores → payment 
 |---|---|
 | Synthetic data generator (`salud_pipeline.synth`) | v0.1, working |
 | Outcome labels from receipts (`salud_pipeline.labels`) | v0.1 |
-| QA scoring harness (`salud_pipeline.qa`): LLM scorer, TF-IDF + LR scorer, metrics | v0.1, LLM not yet run (waiting on team endpoint) |
+| QA scoring harness (`salud_pipeline.qa`): LLM scorer, TF-IDF + LR scorer, metrics, `compare` | LLM vs ML comparison running on LLM-written calls |
 | Hand-tagged ground truth for the 10 real calls | review page ready (`salud-qa tag`), not filled |
 | Propensity models, thresholds, tiers | not started (Phase 5) |
 
@@ -121,6 +121,25 @@ Every scorer predicts the same targets: the 7 checklist items that are visible i
 - **Agent coaching.** A collapsible panel along the bottom shows the tips, each linked to the turn it refers to.
 - **Provenance.** Each saved row records `llm_model` (blank means a human tagged it without AI help) and `overrides`, the items the rater changed. Pre-filled labels lean toward the AI's answers, so judge LLM accuracy on rows with a blank `llm_model`, or report the two groups separately.
 - **Logo.** Put `logo.svg` or `logo.png` in `branding/` (see [branding/README.md](branding/README.md)). Labels go to `data/ground_truth/real_calls_labels.csv`, which `salud-qa ml` and `salud-qa llm` read directly.
+
+**LLM vs ML comparison.** This is the roadmap's centerpiece study.
+
+```bash
+# 1. LLM-written synthetic calls (Qwen; a different model family from the gpt-oss scorer). Resumable.
+.venv/bin/python -m salud_pipeline.synth.cli --out data/synthetic/run_llm --transcripts llm --llm-model qwen/qwen3.8-27b --llm-limit 300
+# 2. Score the same held-out calls with every approach, and write reports/qa/comparison/comparison.md
+.venv/bin/salud-qa compare --test-n 60
+```
+
+- **Test set:** the first `--test-n` calls in `run_llm/llm_order.txt`.
+- **Approaches compared on that set:**
+  - gpt-oss (zero-shot, using the review page's prompt and cache)
+  - TF-IDF + logistic regression trained on the remaining LLM-written calls, with a learning curve
+  - the same model trained on template calls, with the test calls excluded
+  - a majority-class baseline
+- **Metrics:** accuracy, macro-F1 and Cohen's kappa, with bootstrapped 95% confidence intervals.
+- **Groq free-tier limits for this key:** 8,000 tokens per minute per model, 1,000 requests a day, and 1,000 *output* tokens per minute for Qwen. That makes Qwen generation about 1 call per minute, and gpt-oss scoring about 2 calls per minute (≈3,200 tokens each). Always set `max_tokens`; without it, Groq reserves a large default per request against the limit.
+- **Caveat:** Qwen doesn't always follow every planted label, so the labels carry some noise. It affects all approaches equally.
 
 **Findings so far (Oct 16).** Trained on template calls, TF-IDF + LR reaches ~100% on synthetic test calls by around 500 training calls. That figure is an upper bound caused by formulaic phrasing, not a result. On the real calls it mislabels most greetings as failures and calls a transfer a hang-up. Real accuracy can't be measured until the calls are hand-tagged.
 
