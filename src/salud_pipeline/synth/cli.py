@@ -31,8 +31,6 @@ from .transcripts import render_template
 from .validate import validate
 from .world import generate
 
-CRM_TABLES = [S.GUARANTOR, S.ACCOUNTS, S.CONTACTS, S.BRIDGE, S.RECEIPTS, S.QA_REVIEW]
-
 
 def _write_transcripts(calls: pd.DataFrame, out: Path, cfg: GeneratorConfig, mode: str,
                        endpoint: LLMEndpoint, limit: int | None) -> int:

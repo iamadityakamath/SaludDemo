@@ -3,7 +3,6 @@
     salud-qa tag --rater AK      # review page: 10 real + LLM-written synthetic calls, Analyze, tag, save
     salud-qa phase1              # AI vs human agreement + per-call export (reports/phase1/)
     salud-qa ping                # check the LLM endpoint (.env) and list its models
-    salud-qa template            # blank labels sheet for the real calls
     salud-qa select-synthetic    # (re)pick the balanced 50 synthetic calls for tagging
 
 Endpoint config: GROQ_API_KEY / GROQ_MODEL in .env, or $SALUD_LLM_BASE_URL, $SALUD_LLM_MODEL,
@@ -18,8 +17,7 @@ from pathlib import Path
 
 from ..llm_client import LLMEndpoint
 from ..schema import REPO_ROOT
-from .sources import ASSIST_CACHE, REAL_DIR, REAL_LABELS, SYNTHETIC_RUN, phase1_sources
-from .targets import write_template
+from .sources import ASSIST_CACHE, REAL_DIR, SYNTHETIC_RUN, phase1_sources
 
 PHASE1_OUT = REPO_ROOT / "reports" / "phase1"
 
@@ -29,14 +27,6 @@ def _endpoint(args) -> LLMEndpoint:
     ep.base_url = getattr(args, "base_url", None) or ep.base_url
     ep.model = getattr(args, "model", None) or ep.model
     return ep
-
-
-def cmd_template(args) -> None:
-    REAL_LABELS.parent.mkdir(parents=True, exist_ok=True)
-    if REAL_LABELS.exists() and not args.force:
-        sys.exit(f"{REAL_LABELS} exists; pass --force to overwrite")
-    write_template(REAL_LABELS, REAL_DIR)
-    print(f"Wrote {REAL_LABELS}: one row per real call.")
 
 
 def cmd_tag(args) -> None:
@@ -129,9 +119,6 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    t = sub.add_parser("template", help="blank labels sheet for the real calls")
-    t.add_argument("--force", action="store_true")
-
     tag = sub.add_parser("tag", help="review page")
     tag.add_argument("--rater", required=True, help="your initials; each rater tags blind")
     tag.add_argument("--run", type=Path, default=SYNTHETIC_RUN, help="synthetic run listed with the real calls")
@@ -156,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
     try:
-        {"template": cmd_template, "tag": cmd_tag, "ping": cmd_ping, "phase1": cmd_phase1,
+        {"tag": cmd_tag, "ping": cmd_ping, "phase1": cmd_phase1,
          "select-synthetic": cmd_select_synthetic}[args.cmd](args)
     except RuntimeError as e:
         sys.exit(f"Error: {e}")

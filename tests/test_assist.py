@@ -12,7 +12,7 @@ from salud_pipeline import llm_client
 from salud_pipeline.llm_client import LLMEndpoint, load_dotenv
 from salud_pipeline.qa.assist import CallAssistant, parse, split_turns
 from salud_pipeline.qa.tag_server import CallSource, serve
-from salud_pipeline.qa.targets import TRANSCRIPT_ITEMS, write_template
+from salud_pipeline.qa.targets import TRANSCRIPT_ITEMS
 
 TEXT = ("Agent: Thank you for calling billing, this is [REDACTED NAME]. How can I help?\n\n"
         "Patient: I got a bill I don't understand.\n\n"
@@ -122,7 +122,6 @@ def _tagger(tmp_path, endpoint, real):
     (tdir / "a.txt").write_text(TEXT)
     (tdir / "b.txt").write_text(TEXT.replace("billing", "accounts"))
     csv = tmp_path / "labels.csv"
-    write_template(csv, tdir)
     key = "real" if real else "synthetic"
     httpd = serve([CallSource(key, key.title(), tdir, csv, real=real)], "AK", port=0, endpoint=endpoint,
                   cache_dir=tmp_path / "cache")

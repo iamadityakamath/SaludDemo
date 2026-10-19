@@ -18,7 +18,6 @@ from ..llm_client import LLMEndpoint
 from .targets import ITEM_DEFINITIONS, OUTCOME_DEFINITIONS, OUTCOME_PRECEDENCE, OUTCOMES, SENTIMENTS, TRANSCRIPT_ITEMS
 
 PROMPT_VERSION = "assist-v2"  # v2: precise outcome definitions
-ANSWERS = ("Yes", "No", "N/A")
 
 SYSTEM = (
     "You are a senior quality-assurance reviewer for a hospital patient billing call center that "

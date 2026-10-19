@@ -263,7 +263,7 @@ def _misstatus(rng, true_result: str) -> str | None:
 def simulate_connected_call(w: World, g: Guarantor, when: pd.Timestamp, direction: str,
                             accts: list[Account], cid: str, events: list) -> dict:
     """Create the CRM fields for a connected call and the hidden truth row."""
-    rng, cfg = w.rng, w.cfg
+    rng = w.rng
     agent = w.agents[int(rng.integers(len(w.agents)))]
     inbound = direction.startswith("inbound")
     scenario = _pick_scenario(rng, g, inbound)

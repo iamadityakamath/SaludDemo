@@ -2,7 +2,6 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import pandas as pd
 import pytest
 
 from salud_pipeline.llm_client import LLMEndpoint

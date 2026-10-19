@@ -8,7 +8,8 @@ import pytest
 
 from salud_pipeline.llm_client import LLMEndpoint
 from salud_pipeline.qa.tag_server import CallSource, serve
-from salud_pipeline.qa.targets import load_ground_truth, write_template
+from salud_pipeline.qa.phase1 import load_labels
+from salud_pipeline.qa.targets import LABEL_COLUMNS
 
 GOOD = {"greeting": "Yes", "culture": "No", "capturing_data": "N/A", "understanding_needs": "Yes",
         "correct_info": "Yes", "first_contact_resolution": "No", "compliance": "Yes",
@@ -27,7 +28,8 @@ def setup(tmp_path):
 
     real_dir, syn_dir = make("real", ["a.txt", "b.txt"]), make("syn", ["s1.txt", "s2.txt", "s3.txt"])
     real_csv, syn_csv = tmp_path / "real.csv", tmp_path / "syn.csv"
-    write_template(real_csv, real_dir)
+    # An older labels file can hold blank placeholder rows (no rater); saving replaces them per call.
+    pd.DataFrame([{c: "" for c in LABEL_COLUMNS} | {"file_id": f} for f in ("a.txt", "b.txt")]).to_csv(real_csv, index=False)
     sources = [CallSource("real", "Real", real_dir, real_csv, real=True),
                CallSource("synthetic", "Synthetic", syn_dir, syn_csv, real=False)]
     servers = []
@@ -75,12 +77,12 @@ def test_labels_route_to_each_sources_csv(setup):
     real = pd.read_csv(real_csv, dtype=str, keep_default_na=False)
     rows = real[real["file_id"] == "a.txt"]
     assert len(rows) == 1 and rows.iloc[0]["greeting"] == "No"
-    assert (real["file_id"] == "b.txt").sum() == 1  # untouched template row stays
+    assert (real["file_id"] == "b.txt").sum() == 1  # untouched placeholder row stays
     assert "s2.txt" not in set(real["file_id"])
     syn = pd.read_csv(syn_csv, dtype=str, keep_default_na=False)
     assert list(syn["file_id"]) == ["s2.txt"]
-    gt = load_ground_truth(real_csv, real_dir).dropna(subset=["sentiment"])
-    assert gt.iloc[0]["contact_id"] == "a" and gt.iloc[0]["capturing_data"] == "N/A"
+    saved = load_labels([CallSource("real", "Real", real_dir, real_csv, real=True)])
+    assert list(saved["call_id"]) == ["real/a.txt"] and saved.iloc[0]["capturing_data"] == "N/A"
     labels = _get(url + "/api/state")["labels"]
     assert set(labels) == {"real/a.txt", "synthetic/s2.txt"}
 

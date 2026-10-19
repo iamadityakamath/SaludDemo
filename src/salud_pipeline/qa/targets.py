@@ -87,24 +87,3 @@ def load_synthetic(run_dir: Path) -> pd.DataFrame:
     out["outcome"] = calls["true_result"].map(_OUTCOME_MAP)
     out.loc[calls["hung_up"].astype(bool), "outcome"] = "hung_up"
     return out.reset_index(drop=True)
-
-
-def load_ground_truth(labels_csv: Path, transcripts_dir: Path) -> pd.DataFrame:
-    """Human tags in templates/ground_truth_template.csv format. Multiple raters allowed."""
-    # keep_default_na=False: pandas would otherwise read a rater's literal "N/A" as missing.
-    gt = pd.read_csv(labels_csv, dtype=str, keep_default_na=False).replace("", None).dropna(subset=["file_id"])
-    for col in TRANSCRIPT_ITEMS:
-        gt[col] = gt[col].str.strip().str.capitalize().replace({"Na": "N/A", "N/a": "N/A"})
-    gt["sentiment"] = gt["sentiment"].str.strip().str.lower()
-    gt["outcome"] = gt["outcome"].str.strip().str.lower()
-    gt["contact_id"] = gt["file_id"].str.replace(".txt", "", regex=False)
-    gt["text"] = [clean_transcript((transcripts_dir / f"{c}.txt").read_text()) for c in gt["contact_id"]]
-    return gt
-
-
-def write_template(path: Path, transcripts_dir: Path | None = None) -> None:
-    cols = LABEL_COLUMNS
-    rows = []
-    if transcripts_dir is not None:
-        rows = [{"file_id": p.name} for p in sorted(transcripts_dir.glob("*.txt"))]
-    pd.DataFrame(rows, columns=cols).to_csv(path, index=False)
