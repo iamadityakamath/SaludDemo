@@ -7,9 +7,10 @@ import pandas as pd
 import pytest
 
 from salud_pipeline.llm_client import LLMEndpoint
-from salud_pipeline.qa.tag_server import CallSource, serve
-from salud_pipeline.qa.phase1 import load_labels
-from salud_pipeline.qa.targets import LABEL_COLUMNS
+from salud_pipeline.phase1.calls import CallSource
+from salud_pipeline.phase1.dashboard import serve
+from salud_pipeline.phase1.compare import load_labels
+from salud_pipeline.phase1.checklist import LABEL_COLUMNS
 
 GOOD = {"greeting": "Yes", "culture": "No", "capturing_data": "N/A", "understanding_needs": "Yes",
         "correct_info": "Yes", "first_contact_resolution": "No", "compliance": "Yes",

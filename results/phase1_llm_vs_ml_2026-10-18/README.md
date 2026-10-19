@@ -1,4 +1,4 @@
-# LLM vs traditional ML for call QA scoring (Oct 18, 2026)
+# Phase 1: LLM vs traditional ML for call QA scoring (Oct 18, 2026)
 
 **Decision:** Phase 1 call scoring uses the LLM only. This folder is the evidence the roadmap asks for
 when an ML classifier is not pursued ("document that explicitly rather than forcing it").

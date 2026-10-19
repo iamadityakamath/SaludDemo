@@ -13,8 +13,8 @@ dependencies = [
 dev = ["pytest>=8"]
 
 [project.scripts]
-salud-synth = "salud_pipeline.synth.cli:main"
-salud-qa = "salud_pipeline.qa.cli:main"
+salud-phase1 = "salud_pipeline.phase1.cli:main"
+salud-synth = "salud_pipeline.phase2.synthetic.cli:main"
 
 [build-system]
 requires = ["hatchling"]

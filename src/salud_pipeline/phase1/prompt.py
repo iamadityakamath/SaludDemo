@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..llm_client import LLMEndpoint
-from .targets import ITEM_DEFINITIONS, OUTCOME_DEFINITIONS, OUTCOME_PRECEDENCE, OUTCOMES, SENTIMENTS, TRANSCRIPT_ITEMS
+from .checklist import ITEM_DEFINITIONS, OUTCOME_DEFINITIONS, OUTCOME_PRECEDENCE, OUTCOMES, SENTIMENTS, TRANSCRIPT_ITEMS
 
 PROMPT_VERSION = "assist-v2"  # v2: precise outcome definitions
 

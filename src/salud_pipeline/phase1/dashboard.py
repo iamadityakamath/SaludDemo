@@ -1,20 +1,15 @@
-"""Local call review page for building QA ground truth, with LLM pre-fill and coaching tips.
+"""Phase 1 route 1: the dashboard that assists manual tagging.
 
-    salud-qa tag --rater AK
+    salud-phase1 dashboard --rater AK
 
-One page lists every call from every source (the real redacted calls and a synthetic run) with
-filters for source, tagging status and ID. Serves on 127.0.0.1 only.
+Lists the 60 Phase 1 calls (calls.py) with filters, serves on 127.0.0.1 only, and saves each rater's tags
+to the manual-tags CSVs. The Analyze button runs the same one-prompt LLM review as the script route
+(prompt.py) to pre-fill the checklist, cite the transcript turns behind each answer and suggest coaching
+tips. The LLM runs only when the rater presses Analyze. Saved rows record which model pre-filled them
+(llm_model) and which items the rater changed (overrides); tags saved without Analyze have a blank llm_model.
 
-Each source keeps its own labels CSV, so synthetic practice tags never mix into the real ground
-truth. When an LLM is configured (.env / environment, see llm_client.py), the Analyze button pre-fills
-the checklist from one review that cites the transcript turns behind each answer and suggests
-coaching tips. The LLM runs only when the rater presses Analyze; reopening an analyzed call
-shows the cached result. Saved rows record which model pre-filled them and which items the rater
-overrode.
-
-Real and synthetic calls are analyzed the same way. Real calls are redacted, but Analyze still sends
-them to the configured LLM (e.g. Groq); the page asks the rater to confirm once per browser session
-before the first real call is sent to a non-local provider.
+Real calls are redacted, but Analyze still sends them to the configured LLM (e.g. Groq); the page asks
+once per browser session before the first real call goes to a non-local provider.
 """
 
 from __future__ import annotations
@@ -22,7 +17,6 @@ from __future__ import annotations
 import json
 import mimetypes
 import threading
-from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
@@ -31,27 +25,14 @@ from urllib.parse import parse_qs, urlparse
 import pandas as pd
 
 from ..llm_client import LLMEndpoint
-from ..schema import REPO_ROOT
-from .assist import CallAssistant, split_turns
-from .targets import (ITEM_DEFINITIONS, LABEL_COLUMNS, OUTCOMES, SENTIMENTS, TARGETS, TRANSCRIPT_ITEMS,
-                      clean_transcript)
+from ..paths import LLM_CACHE, REPO_ROOT
+from .calls import CallSource
+from .checklist import (ITEM_DEFINITIONS, LABEL_COLUMNS, OUTCOMES, SENTIMENTS, TARGETS, TRANSCRIPT_ITEMS,
+                        clean_transcript)
+from .prompt import CallAssistant, split_turns
 
 BRANDING_DIR = REPO_ROOT / "branding"
 LOGO_NAMES = ["logo.svg", "logo.png", "logo.webp", "logo.jpg", "logo.jpeg"]
-
-
-@dataclass
-class CallSource:
-    key: str               # short id used in call ids, e.g. "real" / "synthetic"
-    label: str             # shown in the page
-    transcripts_dir: Path
-    labels_csv: Path
-    real: bool             # real client data: subject to the HIPAA guard
-    include: frozenset[str] | None = None  # contact IDs (file stems) to list; None = every transcript
-
-    def files(self) -> list[Path]:
-        paths = sorted(self.transcripts_dir.glob("*.txt")) if self.transcripts_dir.exists() else []
-        return [p for p in paths if self.include is None or p.stem in self.include]
 
 
 class LabelStore:
@@ -190,7 +171,7 @@ def _logo_path() -> Path | None:
 
 
 def make_handler(store: LabelStore, rater: str, suggester: Suggester):
-    page = files("salud_pipeline.qa").joinpath("static/tagger.html").read_text()
+    page = files("salud_pipeline.phase1").joinpath("static/dashboard.html").read_text()
     config = {"rater": rater, "items": TRANSCRIPT_ITEMS, "definitions": ITEM_DEFINITIONS,
               "sentiments": SENTIMENTS, "outcomes": OUTCOMES,
               "sources": [{"key": s.key, "label": s.label, "real": s.real} for s in store.sources.values()]}
@@ -266,5 +247,5 @@ def make_handler(store: LabelStore, rater: str, suggester: Suggester):
 def serve(sources: list[CallSource], rater: str, port: int = 8765, endpoint: LLMEndpoint | None = None,
           cache_dir: Path | None = None) -> ThreadingHTTPServer:
     store = LabelStore([s for s in sources if s.transcripts_dir.exists()])
-    suggester = Suggester(endpoint, cache_dir or REPO_ROOT / "reports" / "qa" / "assist_cache")
+    suggester = Suggester(endpoint, cache_dir or LLM_CACHE)
     return ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, rater, suggester))

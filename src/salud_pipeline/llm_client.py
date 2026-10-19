@@ -21,11 +21,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .paths import REPO_ROOT
+
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
-ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+ENV_FILE = REPO_ROOT / ".env"
 
 
 def load_dotenv(path: Path = ENV_FILE) -> None:
@@ -113,6 +115,3 @@ class LLMEndpoint:
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         return self._request("/chat/completions", body)["choices"][0]["message"]["content"]
-
-    def list_models(self) -> list[str]:
-        return [m["id"] for m in self._request("/models").get("data", [])]

@@ -15,11 +15,11 @@ data/Redacted Transcripts with Inferred Speakers/
 data/BIG_Schema_Only_Handoff/
 docs/
 
-# Generated synthetic runs (reproducible from config + seed)
-data/synthetic/
+# Generated data: synthetic calls, synthetic world, manual tags (reproducible or personal)
+data/phase1/
+data/phase2/
 
-# Human tags on real calls and generated reports
-data/ground_truth/
+# Generated reports and LLM outputs
 reports/
 
 # Secrets (API keys)

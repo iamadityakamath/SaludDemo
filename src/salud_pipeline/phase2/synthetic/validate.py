@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from .. import labels
+from .. import outcome_labels as labels
 from .. import schema as S
 
 PK = {

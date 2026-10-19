@@ -2,11 +2,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from salud_pipeline import schema as S
-from salud_pipeline.synth.config import GeneratorConfig
-from salud_pipeline.synth.transcripts import render_template
-from salud_pipeline.synth.validate import validate
-from salud_pipeline.synth.world import generate
+from salud_pipeline.phase2 import schema as S
+from salud_pipeline.phase2.synthetic.config import GeneratorConfig
+from salud_pipeline.phase2.synthetic.transcripts import render_template
+from salud_pipeline.phase2.synthetic.validate import validate
+from salud_pipeline.phase2.synthetic.world import generate
 
 
 @pytest.fixture(scope="module")

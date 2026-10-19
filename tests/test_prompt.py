@@ -10,9 +10,10 @@ import pytest
 
 from salud_pipeline import llm_client
 from salud_pipeline.llm_client import LLMEndpoint, load_dotenv
-from salud_pipeline.qa.assist import CallAssistant, parse, split_turns
-from salud_pipeline.qa.tag_server import CallSource, serve
-from salud_pipeline.qa.targets import TRANSCRIPT_ITEMS
+from salud_pipeline.phase1.prompt import CallAssistant, parse, split_turns
+from salud_pipeline.phase1.calls import CallSource
+from salud_pipeline.phase1.dashboard import serve
+from salud_pipeline.phase1.checklist import TRANSCRIPT_ITEMS
 
 TEXT = ("Agent: Thank you for calling billing, this is [REDACTED NAME]. How can I help?\n\n"
         "Patient: I got a bill I don't understand.\n\n"
@@ -116,7 +117,7 @@ def test_assistant_caches(llm_url, tmp_path):
     assert r1 == r2 and FakeLLM.calls == 1 and r1["coaching"][0]["tip"] == "Keep it up."
 
 
-def _tagger(tmp_path, endpoint, real):
+def _dashboard(tmp_path, endpoint, real):
     tdir = tmp_path / "calls"
     tdir.mkdir(exist_ok=True)
     (tdir / "a.txt").write_text(TEXT)
@@ -140,7 +141,7 @@ def _post(url, path, payload):
 
 
 def test_llm_runs_only_on_analyze(llm_url, tmp_path):
-    httpd, url, csv, key = _tagger(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=False)
+    httpd, url, csv, key = _dashboard(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=False)
     try:
         # Opening the page and a call, and reading its analysis, never call the LLM.
         _get(url + "/api/state")
@@ -167,7 +168,7 @@ def test_llm_runs_only_on_analyze(llm_url, tmp_path):
 
 
 def test_save_records_provenance(llm_url, tmp_path):
-    httpd, url, csv, key = _tagger(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=False)
+    httpd, url, csv, key = _dashboard(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=False)
     try:
         values = {k: "Yes" for k in TRANSCRIPT_ITEMS} | {"greeting": "No", "sentiment": "neutral", "outcome": "paid"}
         llm = {"model": "fake", "answers": {k: "Yes" for k in TRANSCRIPT_ITEMS} | {"sentiment": "neutral", "outcome": "paid"}}
@@ -179,7 +180,7 @@ def test_save_records_provenance(llm_url, tmp_path):
 
 
 def test_real_calls_analyzed_like_synthetic(llm_url, tmp_path):
-    httpd, url, _, key = _tagger(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=True)
+    httpd, url, _, key = _dashboard(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=True)
     try:
         assert _get(url + "/api/state")["config"]["llm"]["real"] is None
         assert _get(url + f"/api/analysis?id={key}/a.txt") == {"none": True} and FakeLLM.calls == 0
@@ -190,7 +191,7 @@ def test_real_calls_analyzed_like_synthetic(llm_url, tmp_path):
 
 
 def test_no_llm_configured(tmp_path):
-    httpd, url, _, _ = _tagger(tmp_path, None, real=False)
+    httpd, url, _, _ = _dashboard(tmp_path, None, real=False)
     try:
         assert "GROQ_API_KEY" in _get(url + "/api/state")["config"]["llm"]["synthetic"]
     finally:

@@ -1,9 +1,9 @@
 import pandas as pd
 import pytest
 
-from salud_pipeline.qa.evaluate import agreement_table, cohen_kappa, consensus, inter_rater
-from salud_pipeline.qa.targets import TARGETS, load_synthetic
-from salud_pipeline.synth.cli import main as synth_main
+from salud_pipeline.phase1.metrics import agreement_table, cohen_kappa, consensus, inter_rater
+from salud_pipeline.phase1.checklist import TARGETS, load_synthetic
+from salud_pipeline.phase2.synthetic.cli import main as synth_main
 
 
 @pytest.fixture(scope="module")

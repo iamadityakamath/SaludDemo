@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 from salud_pipeline.llm_client import LLMEndpoint
-from salud_pipeline.qa.targets import TRANSCRIPT_ITEMS
+from salud_pipeline.phase1.checklist import TRANSCRIPT_ITEMS
 
 REPLY = {"checklist": {k: {"answer": "Yes", "reason": "ok", "evidence": [{"turn": 1, "quote": "hi"}]}
                        for k in TRANSCRIPT_ITEMS},
@@ -23,9 +23,6 @@ class FakeServer(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-
-    def do_GET(self):
-        self._send({"data": [{"id": "fake-model"}]})
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -50,11 +47,11 @@ def test_endpoint_reads_env_and_sends_bearer_token(server, monkeypatch):
     monkeypatch.setenv("SALUD_LLM_MODEL", "fake-model")
     monkeypatch.setenv("SALUD_LLM_API_KEY", "secret-token")
     ep = LLMEndpoint()
-    assert ep.list_models() == ["fake-model"]
-    ep.chat([{"role": "user", "content": "hi"}], json_mode=True)
+    assert ep.model == "fake-model"
+    ep.chat([{"role": "user", "content": "hi"}], json_mode=True, max_tokens=50)
     req = FakeServer.requests[-1]
     assert req["auth"] == "Bearer secret-token"
-    assert req["body"]["response_format"] == {"type": "json_object"}
+    assert req["body"]["response_format"] == {"type": "json_object"} and req["body"]["max_tokens"] == 50
     assert "secret-token" not in repr(ep)
 
 

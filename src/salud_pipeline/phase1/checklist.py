@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .. import schema as S
+from ..phase2 import schema as S
 
 # Checklist items visible in a transcript.
 TRANSCRIPT_ITEMS = [k for k in S.QA_KEYS if k not in ("call_statusing", "grammar")]

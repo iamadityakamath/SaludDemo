@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-HANDOFF_DIR = REPO_ROOT / "data" / "BIG_Schema_Only_Handoff"
-SCHEMA_JSON = HANDOFF_DIR / "BIG_Schema.json"
+from ..paths import SCHEMA_HANDOFF
+
+SCHEMA_JSON = SCHEMA_HANDOFF / "BIG_Schema.json"
 
 # --- Table names (CRM entity views, reproduced in the big_synthetic schema) ---
 GUARANTOR = "salud_gphpvguarantor"

@@ -1,6 +1,8 @@
 """Generate a synthetic run.
 
-    salud-synth --config configs/default.json --out data/synthetic/run_default
+    salud-synth --config configs/synthetic_world.json            # Phase 2 world -> data/phase2/synthetic_world
+    salud-synth --config configs/synthetic_world.json --out data/phase1/synthetic_calls \
+        --transcripts llm --llm-model qwen/qwen3.8-27b --llm-limit 300   # how the Phase 1 calls were written
 
 Output layout:
     crm/          six CRM-shaped tables (CSV), the only inputs modeling code may read as features
@@ -24,7 +26,8 @@ import numpy as np
 import pandas as pd
 
 from .. import schema as S
-from ..llm_client import LLMEndpoint
+from ...llm_client import LLMEndpoint
+from ...paths import PHASE2_SYNTHETIC_WORLD
 from .config import GeneratorConfig
 from .llm import generate_with_endpoint, prompt_record
 from .transcripts import render_template
@@ -95,7 +98,7 @@ def _summary(t: dict[str, pd.DataFrame]) -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", type=Path, help="JSON config (see configs/)")
-    ap.add_argument("--out", type=Path, default=Path("data/synthetic/run"))
+    ap.add_argument("--out", type=Path, default=PHASE2_SYNTHETIC_WORLD)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--n-guarantors", type=int)
     ap.add_argument("--transcripts", choices=["template", "llm", "none"], default="template")

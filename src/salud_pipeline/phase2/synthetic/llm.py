@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 
 from .. import schema as S
-from ..llm_client import LLMEndpoint
+from ...llm_client import LLMEndpoint
 
 BEHAVIOR = {
     "greeting": ("opens with the full greeting script: name, department, recorded-line notice",
@@ -36,7 +36,7 @@ BEHAVIOR = {
 
 def _ending(call: dict) -> str:
     """The planted outcome in the same words the QA prompt uses to define it."""
-    from ..qa.targets import _OUTCOME_MAP, OUTCOME_DEFINITIONS
+    from ...phase1.checklist import _OUTCOME_MAP, OUTCOME_DEFINITIONS
     key = "hung_up" if call["hung_up"] else _OUTCOME_MAP.get(call["true_result"], "non_committal")
     return OUTCOME_DEFINITIONS[key]
 

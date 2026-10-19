@@ -1,10 +1,12 @@
-"""Phase 1 results: AI call analysis vs manual tags, and a per-call export.
+"""Phase 1 route 2, step 2: compare the script's AI analyses with the manual tags, and export per call.
+
+    salud-phase1 compare
 
 Inputs:
-  - human tags saved from the review page (data/ground_truth/*_labels.csv)
-  - AI analyses saved by the review page's Analyze button (reports/qa/assist_cache)
+  - AI analyses from `salud-phase1 analyze` (reports/phase1/ai_analyses.json)
+  - manual tags saved from the dashboard (data/phase1/manual_tags/*.csv)
 
-Outputs (reports/phase1/):
+Outputs (reports/phase1/comparison/):
   - phase1_results.xlsx  Summary, Calls, Coaching, AI vs human, Rater agreement, Synthetic check, Definitions
   - calls.csv, coaching.csv, ai_vs_human.csv, rater_agreement.csv  (same tables, database-friendly)
   - summary.md
@@ -20,11 +22,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .assist import CallAssistant
-from .evaluate import agreement_table, consensus, inter_rater
-from .tag_server import CallSource
-from .targets import (ITEM_DEFINITIONS, LABEL_COLUMNS, OUTCOME_DEFINITIONS, OUTCOME_GROUPS, TARGETS,
-                      TRANSCRIPT_ITEMS, clean_transcript, load_synthetic)
+from .calls import CallSource
+from .checklist import (ITEM_DEFINITIONS, LABEL_COLUMNS, OUTCOME_DEFINITIONS, OUTCOME_GROUPS, TARGETS,
+                        TRANSCRIPT_ITEMS, load_synthetic)
+from .metrics import agreement_table, consensus, inter_rater
 
 ITEM_NAMES = {
     "greeting": "Appropriate greeting", "culture": "Culture & values", "capturing_data": "Captures key data",
@@ -46,8 +47,7 @@ def load_calls(sources: list[CallSource]) -> list[dict]:
         if not s.transcripts_dir.exists():
             continue
         for p in s.files():
-            calls.append({"call_id": f"{s.key}/{p.name}", "source": s.key, "file_id": p.name,
-                          "real": s.real, "text": clean_transcript(p.read_text())})
+            calls.append({"call_id": f"{s.key}/{p.name}", "source": s.key, "file_id": p.name, "real": s.real})
     return calls
 
 
@@ -102,24 +102,15 @@ def _avg_row(table: pd.DataFrame, label: str) -> dict:
             "outcome_agreement": table.loc[table["target"] == "outcome", "agreement"].mean()}
 
 
-def build(sources: list[CallSource], assistant: CallAssistant | None, analyze_missing: bool = False,
-          progress: bool = True) -> dict[str, pd.DataFrame]:
+def build(sources: list[CallSource], analyses: dict[str, dict]) -> dict[str, pd.DataFrame]:
+    """analyses: call ID -> AI analysis, as saved by analyze.py."""
     calls = load_calls(sources)
     labels = load_labels(sources)
     tagged = set(labels["call_id"])
 
-    # AI analyses: cached ones are free; optionally run the LLM for tagged calls that have none yet.
-    ai_rows, coaching, failed = [], [], []
+    ai_rows, coaching = [], []
     for c in calls:
-        a = assistant.cached(c["text"]) if assistant else None
-        if a is None and analyze_missing and assistant and c["call_id"] in tagged:
-            if progress:
-                print(f"  analyzing {c['call_id']}", flush=True)
-            try:
-                a = assistant.review(c["text"])
-            except (RuntimeError, ValueError) as e:
-                failed.append({"call_id": c["call_id"], "error": str(e)[:200]})
-                a = None
+        a = analyses.get(c["call_id"])
         if a and a.get("checklist"):
             ai_rows.append(ai_flat(c["call_id"], a))
             for i, t in enumerate(a.get("coaching") or [], 1):
@@ -197,11 +188,10 @@ def build(sources: list[CallSource], assistant: CallAssistant | None, analyze_mi
         "tagged_calls_missing_ai_analysis": len(tagged - (set(ai["call_id"]) if len(ai) else set())),
         "tags_made_with_ai_off": int((labels["llm_model"] == "").sum()),
         "raters": ", ".join(sorted(labels["rater"].unique())),
-        "ai_analyses_failed_this_run": len(failed),
     }
     return {"counts": pd.DataFrame([counts]), "overview": overview, "calls": out,
             "coaching": pd.DataFrame(coaching), "agreement": agreement, "rater_agreement": irr,
-            "synthetic_check": sanity, "failed": pd.DataFrame(failed)}
+            "synthetic_check": sanity}
 
 
 def _definitions() -> pd.DataFrame:
@@ -274,7 +264,7 @@ def summary_markdown(results: dict[str, pd.DataFrame]) -> str:
                 lines.append(f"| {ITEM_NAMES[r['target']]} | {r['n']} | {r['agreement']:.2f} "
                              f"[{r['ci_low']:.2f}, {r['ci_high']:.2f}] | {k} |")
     else:
-        lines += ["No tagged calls with an AI analysis yet: tag calls on the review page and press Analyze."]
+        lines += ["No tagged calls with an AI analysis yet: tag calls on the dashboard, then run `salud-phase1 analyze`."]
     lines += ["", "Small samples: with 10 real calls, each item's 95% CI spans about ±0.3. "
               "Treat per-item differences as indicative."]
     return "\n".join(lines) + "\n"

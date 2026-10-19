@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .targets import TARGETS
+from .checklist import TARGETS
 
 
 def cohen_kappa(a, b) -> float:
