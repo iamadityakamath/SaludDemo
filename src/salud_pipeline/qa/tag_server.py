@@ -47,6 +47,11 @@ class CallSource:
     transcripts_dir: Path
     labels_csv: Path
     real: bool             # real client data: subject to the HIPAA guard
+    include: frozenset[str] | None = None  # contact IDs (file stems) to list; None = every transcript
+
+    def files(self) -> list[Path]:
+        paths = sorted(self.transcripts_dir.glob("*.txt")) if self.transcripts_dir.exists() else []
+        return [p for p in paths if self.include is None or p.stem in self.include]
 
 
 class LabelStore:
@@ -57,7 +62,7 @@ class LabelStore:
         self.locks = {s.key: threading.Lock() for s in sources}
         self._calls: list[dict] = []
         for s in sources:
-            for p in sorted(s.transcripts_dir.glob("*.txt")):
+            for p in s.files():
                 self._calls.append({"id": f"{s.key}/{p.name}", "file_id": p.name, "source": s.key})
         self._by_id = {c["id"]: c for c in self._calls}
         self._text_cache: dict[str, dict] = {}

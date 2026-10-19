@@ -8,7 +8,7 @@ The work runs in two phases:
 
 | Phase | Question | Method | Data |
 |---|---|---|---|
-| **1. Call analysis** | Did the agent handle each checklist item? What was the caller's sentiment, and how did the call end? | LLM (Groq `openai/gpt-oss-120b`), checked against manual tags | 10 real calls + 168 LLM-written synthetic calls (tag 10 real + 50 synthetic) |
+| **1. Call analysis** | Did the agent handle each checklist item? What was the caller's sentiment, and how did the call end? | LLM (Groq `openai/gpt-oss-120b`), checked against manual tags | 10 real calls + 50 LLM-written synthetic calls (balanced subset of 168) |
 | **2. Propensity** | Which accounts are most likely to pay? | Traditional ML (logistic regression / gradient boosting) on account features + Phase 1's call-quality score | Thousands of synthetic accounts with payment histories |
 
 Phase 1's per-call output (`reports/phase1/calls.csv`) is Phase 2's call-quality input. The brief requires the two stages to connect rather than be separate projects.
@@ -44,7 +44,10 @@ Client files are **gitignored**: `docs/`, the redacted transcripts, the schema h
 .venv/bin/salud-qa tag --rater AK
 ```
 
-It opens http://127.0.0.1:8765, listening only on this machine. The page lists the **10 real calls** and the **168 LLM-written synthetic calls** (`data/synthetic/run_llm`).
+It opens http://127.0.0.1:8765, listening only on this machine. The page lists the **10 real calls** and a fixed, **balanced set of 50 LLM-written synthetic calls**:
+- The 50 are chosen from the 168 in `data/synthetic/run_llm` and listed in `configs/phase1_synthetic_calls.txt`, which is tracked so every rater tags the same calls.
+- They cover all 8 outcomes, all 6 scenarios, failures of every checklist item, and 9 all-pass calls.
+- `salud-qa select-synthetic --force` re-picks them. Only do that if the team agrees, since existing tags may then refer to calls no longer in the set.
 
 - **Filters:** by source (All, Real, Synthetic), by status (not tagged, in progress, tagged), and by call-ID search.
 - **Analyze button (top right).** The LLM runs only when you press it (or ⌘/Ctrl+Enter). One prompt returns:

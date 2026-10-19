@@ -45,7 +45,7 @@ def load_calls(sources: list[CallSource]) -> list[dict]:
     for s in sources:
         if not s.transcripts_dir.exists():
             continue
-        for p in sorted(s.transcripts_dir.glob("*.txt")):
+        for p in s.files():
             calls.append({"call_id": f"{s.key}/{p.name}", "source": s.key, "file_id": p.name,
                           "real": s.real, "text": clean_transcript(p.read_text())})
     return calls

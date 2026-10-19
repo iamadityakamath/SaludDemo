@@ -90,3 +90,24 @@ def test_phase1_with_nothing_tagged(tmp_path):
     assert res["counts"].iloc[0]["calls_tagged"] == 0
     assert "No tagged calls" in phase1.summary_markdown(res)
     phase1.write(res, tmp_path / "out")
+
+
+def test_balanced_selection_and_include_filter(tmp_path):
+    from salud_pipeline.qa.select import read_selection, select_balanced, write_selection
+    from salud_pipeline.synth.cli import main as synth_main
+
+    synth_main(["--out", str(tmp_path / "run"), "--n-guarantors", "300", "--seed", "8"])
+    quotas = {"paid": 4, "payment_plan": 3, "non_committal": 3, "promise_to_pay": 3}
+    sel = select_balanced(tmp_path / "run", quotas=quotas)
+    assert len(sel) == 13 and sel["contact_id"].is_unique
+    assert sel["outcome"].value_counts().to_dict() == quotas
+    assert sel["scenario"].nunique() >= 4  # spreads across scenarios
+
+    f = tmp_path / "sel.txt"
+    write_selection(sel, f)
+    ids = read_selection(f)
+    assert ids == set(sel["contact_id"])
+    src = CallSource("synthetic", "Synthetic", tmp_path / "run" / "transcripts", tmp_path / "l.csv",
+                     real=False, include=frozenset(ids))
+    assert {p.stem for p in src.files()} == ids
+    assert len(phase1.load_calls([src])) == 13

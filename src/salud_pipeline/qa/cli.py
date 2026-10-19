@@ -4,6 +4,7 @@
     salud-qa phase1              # AI vs human agreement + per-call export (reports/phase1/)
     salud-qa ping                # check the LLM endpoint (.env) and list its models
     salud-qa template            # blank labels sheet for the real calls
+    salud-qa select-synthetic    # (re)pick the balanced 50 synthetic calls for tagging
 
 Endpoint config: GROQ_API_KEY / GROQ_MODEL in .env, or $SALUD_LLM_BASE_URL, $SALUD_LLM_MODEL,
 $SALUD_LLM_API_KEY (or --base-url / --model).
@@ -60,7 +61,7 @@ def cmd_tag(args) -> None:
     llm = "off" if endpoint is None else f"{endpoint.provider} / {endpoint.model or 'no model set'}"
     print(f"Rater {args.rater}. LLM: {llm}")
     for s in sources:
-        n = len(list(s.transcripts_dir.glob("*.txt"))) if s.transcripts_dir.exists() else 0
+        n = len(s.files())
         print(f"  {s.label:9s} {n:5d} calls  -> {s.labels_csv}" + ("" if n else "  (not found, skipped)"))
     print(f"Open {url}  (Ctrl+C to stop)")
     if not args.no_browser:
@@ -80,6 +81,28 @@ def cmd_ping(args) -> None:
         reply = ep.chat([{"role": "user", "content": 'Reply with the JSON {"ok": true}'}], json_mode=True,
                         max_tokens=200)
         print(f"{ep.model} replied: {reply[:200]}")
+
+
+def cmd_select_synthetic(args) -> None:
+    from .assist import CallAssistant
+    from .select import SELECTION_FILE, select_balanced, write_selection
+    from .targets import TRANSCRIPT_ITEMS, load_synthetic
+
+    if SELECTION_FILE.exists() and not args.force:
+        sys.exit(f"{SELECTION_FILE} already exists and raters may be tagging those calls. "
+                 "Pass --force to replace it.")
+    ep = _endpoint(args)
+    analyzed = set()
+    if ep.model:  # prefer calls that already have an AI analysis (saves Groq quota)
+        a = CallAssistant(ep, ASSIST_CACHE)
+        analyzed = {r.contact_id for r in load_synthetic(args.run).itertuples() if a.cached(r.text)}
+    sel = select_balanced(args.run, prefer=analyzed)
+    write_selection(sel)
+    fails = sel[TRANSCRIPT_ITEMS].eq("No")
+    print(f"Wrote {len(sel)} calls to {SELECTION_FILE}")
+    print("  outcomes: ", sel["outcome"].value_counts().to_dict())
+    print("  scenarios:", sel["scenario"].value_counts().to_dict())
+    print("  failed items:", fails.sum().to_dict(), "| all-pass calls:", int((~fails.any(axis=1)).sum()))
 
 
 def cmd_phase1(args) -> None:
@@ -122,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
     p1.add_argument("--analyze-missing", action="store_true",
                     help="run the LLM for tagged calls with no AI analysis yet (uses Groq quota)")
 
+    sel = sub.add_parser("select-synthetic", help="pick the balanced 50 synthetic calls for tagging")
+    sel.add_argument("--run", type=Path, default=SYNTHETIC_RUN)
+    sel.add_argument("--force", action="store_true")
+
     ping = sub.add_parser("ping", help="check the LLM endpoint")
     for p in (tag, p1, ping):
         p.add_argument("--base-url", help="default: $SALUD_LLM_BASE_URL, Groq if GROQ_API_KEY is set")
@@ -129,7 +156,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
     try:
-        {"template": cmd_template, "tag": cmd_tag, "ping": cmd_ping, "phase1": cmd_phase1}[args.cmd](args)
+        {"template": cmd_template, "tag": cmd_tag, "ping": cmd_ping, "phase1": cmd_phase1,
+         "select-synthetic": cmd_select_synthetic}[args.cmd](args)
     except RuntimeError as e:
         sys.exit(f"Error: {e}")
     return 0
