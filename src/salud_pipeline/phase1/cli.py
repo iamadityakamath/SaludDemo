@@ -1,25 +1,23 @@
-"""Phase 1: call analysis. Two routes.
+"""Phase 1: call analysis on the team's shared Neon database. Two routes.
 
 Route 1, dashboard (review the AI's answers and tag):
-    salud-phase1 dashboard --rater AK   # calls open pre-filled from ai_analyses.json; saves go to reviewed_tags/
+    salud-phase1 dashboard --rater AK
 
 Route 2, script (AI analysis of every call, then the comparison):
-    salud-phase1 analyze      # LLM on the 60 Phase 1 calls -> reports/phase1/ai_analyses.json
-    salud-phase1 compare      # AI vs manual tags -> reports/phase1/comparison/
+    salud-phase1 analyze      # LLM on calls without an analysis -> Neon (phase1.ai_analyses)
+    salud-phase1 compare      # AI vs every rater's tags -> reports/phase1/comparison/ (local Excel/CSV)
 
-LLM settings come from .env (GROQ_API_KEY, GROQ_MODEL) or SALUD_LLM_BASE_URL / SALUD_LLM_MODEL /
-SALUD_LLM_API_KEY.
+Settings come from .env: DATABASE_URL (team database), GROQ_API_KEY / GROQ_MODEL (only `analyze` uses the LLM).
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 from ..llm_client import LLMEndpoint
-from ..paths import AI_ANALYSES, AI_BACKUPS, COMPARISON, LLM_CACHE, PHASE1_SYNTHETIC_CALLS, REAL_TRANSCRIPTS
-from .calls import phase1_sources
+from ..paths import COMPARISON, LLM_CACHE
+from .store import Store, as_label_frame
 
 
 def cmd_dashboard(args) -> None:
@@ -27,11 +25,12 @@ def cmd_dashboard(args) -> None:
 
     from .dashboard import serve
 
-    sources = [s for s in phase1_sources(args.calls) if s.transcripts_dir.exists()]
-    if not sources:
-        sys.exit(f"No transcripts found in {REAL_TRANSCRIPTS} or {args.calls / 'transcripts'}")
+    store = Store()
+    calls, ai = store.calls(), store.ai_info()
+    if not calls:
+        sys.exit("The team database has no calls yet. The team lead runs `salud-db setup` once to load them.")
     try:
-        httpd = serve(sources, args.rater.strip(), args.port)
+        httpd = serve(args.rater.strip(), args.port, store=store)
     except OSError as e:
         if e.errno != 48 and "in use" not in str(e):
             raise
@@ -39,12 +38,9 @@ def cmd_dashboard(args) -> None:
                  f"Stop it with Ctrl+C in its terminal (or `lsof -ti:{args.port} | xargs kill`), "
                  f"or pick another port with --port {args.port + 1}.")
     url = f"http://127.0.0.1:{httpd.server_port}/"
-    from .analyze import load
-    ai = load(AI_ANALYSES)
-    print(f"Rater {args.rater}. AI answers from {AI_ANALYSES.name}: {len(ai.get('calls', {}))} calls "
-          f"({ai.get('model') or 'none yet'}; read-only)")
-    for s in sources:
-        print(f"  {s.label:9s} {len(s.files()):3d} calls  -> tags saved to {s.labels_csv}")
+    by_source = {s: sum(c["source"] == s for c in calls) for s in ("real", "synthetic")}
+    print(f"Rater {args.rater}. Team database: {by_source['real']} real + {by_source['synthetic']} synthetic calls, "
+          f"{ai['analyzed']} with AI answers ({ai['model'] or 'none yet'}).")
     print(f"Open {url}  (Ctrl+C to stop)")
     if not args.no_browser:
         webbrowser.open(url)
@@ -62,20 +58,12 @@ def cmd_analyze(args) -> None:
     if not ep.model:
         sys.exit("No LLM configured: set GROQ_API_KEY in .env")
     ep.max_retries = 8  # wait out per-minute rate limits instead of failing
-    print(f"Analyzing Phase 1 calls with {ep.provider} / {ep.model} (prompt {PROMPT_VERSION}). "
+    print(f"Analyzing calls with {ep.provider} / {ep.model} (prompt {PROMPT_VERSION}). "
           "Real calls are included and sent to this provider.")
-    if AI_ANALYSES.exists():  # read-only copy before this run adds anything
-        import shutil
-        from datetime import datetime
-        AI_BACKUPS.mkdir(parents=True, exist_ok=True)
-        backup = AI_BACKUPS / f"ai_analyses_{datetime.now():%Y-%m-%d_%H%M%S}.json"
-        shutil.copy2(AI_ANALYSES, backup)
-        backup.chmod(0o444)
-        print(f"Backed up the current file to {backup.relative_to(AI_ANALYSES.parent)}")
-    c = run(phase1_sources(args.calls), CallAssistant(ep, LLM_CACHE), AI_ANALYSES, limit=args.limit)
-    print(f"\n{c['in_file']} of {c['calls']} calls now in {AI_ANALYSES}")
+    c = run(Store(), CallAssistant(ep, LLM_CACHE), limit=args.limit)
+    print(f"\n{c['analyzed_total']} of {c['calls']} calls now have an AI analysis in the team database")
     print(f"  this run: {c['new_llm_requests']} new LLM requests, {c['from_cache']} from cache, "
-          f"{c['already_in_file']} already in the file, {c['failed']} failed")
+          f"{c['already_analyzed']} already analyzed, {c['failed']} failed")
     if c["not_done"]:
         why = f"stopped early ({c['stopped_early']})" if c["stopped_early"] else f"--limit {args.limit} reached"
         print(f"  {c['not_done']} calls left: {why}. Run `salud-phase1 analyze` again later to continue.")
@@ -83,17 +71,17 @@ def cmd_analyze(args) -> None:
 
 def cmd_compare(args) -> None:
     from . import compare
-    from .analyze import load
 
-    data = load(AI_ANALYSES)
-    analyses = {cid: entry["analysis"] for cid, entry in data.get("calls", {}).items()}
+    store = Store()
+    analyses = store.ai_analyses()
     if not analyses:
-        print(f"Note: no AI analyses yet ({AI_ANALYSES}). Run `salud-phase1 analyze` first.")
-    results = compare.build(phase1_sources(args.calls), analyses)
+        print("Note: no AI analyses in the team database yet. Run `salud-phase1 analyze` first.")
+    results = compare.build(store.calls(), as_label_frame(store.tags()), analyses, store.planted())
     xlsx = compare.write(results, COMPARISON)
     print(compare.summary_markdown(results))
+    info = store.ai_info()
     if analyses:
-        print(f"AI analyses: {data.get('model')} / {data.get('prompt_version')}, updated {data.get('updated_at')}")
+        print(f"AI analyses: {info['model']} / {info['prompt_version']}")
     print(f"Saved {xlsx}\n  plus CSVs and summary.md in {COMPARISON}")
 
 
@@ -107,13 +95,10 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("--port", type=int, default=8765)
     d.add_argument("--no-browser", action="store_true")
 
-    a = sub.add_parser("analyze", help="route 2, step 1: LLM analysis of every call -> JSON")
+    a = sub.add_parser("analyze", help="route 2, step 1: LLM analysis of every call -> team database")
     a.add_argument("--limit", type=int, help="maximum new LLM requests this run")
 
-    sub.add_parser("compare", help="route 2, step 2: AI vs manual tags -> Excel + CSV")
-
-    for p in sub.choices.values():
-        p.add_argument("--calls", type=Path, default=PHASE1_SYNTHETIC_CALLS, help=argparse.SUPPRESS)
+    sub.add_parser("compare", help="route 2, step 2: AI vs every rater's tags -> Excel + CSV")
 
     args = ap.parse_args(argv)
     try:

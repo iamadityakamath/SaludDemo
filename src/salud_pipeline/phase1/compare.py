@@ -2,9 +2,10 @@
 
     salud-phase1 compare
 
-Inputs:
-  - AI analyses from `salud-phase1 analyze` (reports/phase1/ai_analyses.json)
-  - manual tags saved from the dashboard (data/phase1/manual_tags/*.csv)
+Inputs (from the team's Neon database, see store.py):
+  - AI analyses added by `salud-phase1 analyze`
+  - reviewed tags saved from the dashboard by every rater
+  - planted labels of the synthetic calls
 
 Outputs (reports/phase1/comparison/):
   - phase1_results.xlsx  Summary, Calls, Coaching, AI vs human, Rater agreement, Synthetic check, Definitions
@@ -22,9 +23,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .calls import CallSource
-from .checklist import (ITEM_DEFINITIONS, LABEL_COLUMNS, OUTCOME_DEFINITIONS, OUTCOME_GROUPS, TARGETS,
-                        TRANSCRIPT_ITEMS, load_synthetic)
+from .checklist import ITEM_DEFINITIONS, OUTCOME_DEFINITIONS, OUTCOME_GROUPS, TARGETS, TRANSCRIPT_ITEMS
 from .metrics import agreement_table, consensus, inter_rater
 
 ITEM_NAMES = {
@@ -39,31 +38,6 @@ def call_quality(answers: dict) -> float | None:
     vals = [answers.get(k) for k in TRANSCRIPT_ITEMS]
     yes, no = vals.count("Yes"), vals.count("No")
     return round(yes / (yes + no), 3) if yes + no else None
-
-
-def load_calls(sources: list[CallSource]) -> list[dict]:
-    calls = []
-    for s in sources:
-        if not s.transcripts_dir.exists():
-            continue
-        for p in s.files():
-            calls.append({"call_id": f"{s.key}/{p.name}", "source": s.key, "file_id": p.name})
-    return calls
-
-
-def load_labels(sources: list[CallSource]) -> pd.DataFrame:
-    """Every saved human tag (one row per call per rater). Blank template rows are dropped."""
-    frames = []
-    for s in sources:
-        if not s.labels_csv.exists():
-            continue
-        df = pd.read_csv(s.labels_csv, dtype=str, keep_default_na=False).reindex(columns=LABEL_COLUMNS, fill_value="")
-        df = df[(df["rater"] != "") & (df[TARGETS] != "").any(axis=1)].copy()
-        df.insert(0, "call_id", s.key + "/" + df["file_id"])
-        df.insert(1, "source", s.key)
-        frames.append(df)
-    cols = ["call_id", "source"] + LABEL_COLUMNS
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=cols)
 
 
 def ai_flat(call_id: str, a: dict) -> dict:
@@ -102,10 +76,12 @@ def _avg_row(table: pd.DataFrame, label: str) -> dict:
             "outcome_agreement": table.loc[table["target"] == "outcome", "agreement"].mean()}
 
 
-def build(sources: list[CallSource], analyses: dict[str, dict]) -> dict[str, pd.DataFrame]:
-    """analyses: call ID -> AI analysis, as saved by analyze.py."""
-    calls = load_calls(sources)
-    labels = load_labels(sources)
+def build(calls: list[dict], labels: pd.DataFrame, analyses: dict[str, dict],
+          planted: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
+    """calls: [{call_id, source, file_id}]; labels: one row per call per rater (call_id, rater, targets,
+    llm_model, overrides); analyses: call ID -> AI analysis; planted: synthetic call_id + targets."""
+    labels = labels.copy()
+    labels["llm_model"] = labels["llm_model"].fillna("") if "llm_model" in labels else ""
     tagged = set(labels["call_id"])
 
     ai_rows, coaching = [], []
@@ -164,16 +140,13 @@ def build(sources: list[CallSource], analyses: dict[str, dict]) -> dict[str, pd.
 
     # Synthetic calls: do the transcripts express their planted labels? (human vs planted, AI vs planted)
     sanity = pd.DataFrame()
-    syn = next((s for s in sources if not s.real), None)
-    if syn is not None and (syn.transcripts_dir.parent / "truth" / "truth_calls.csv").exists():
-        planted = load_synthetic(syn.transcripts_dir.parent)
-        planted["call_id"] = "synthetic/" + planted["contact_id"] + ".txt"
-        planted = planted[["call_id"] + TARGETS]
+    if planted is not None and len(planted):
         parts = []
         for name, pred in (("Human vs planted label", human), ("AI vs planted label", ai_ans)):
             pred = pred[pred["call_id"].str.startswith("synthetic/")]
-            if len(pred) and len(planted[planted["call_id"].isin(set(pred["call_id"]))]):
-                t = agreement_table(planted[planted["call_id"].isin(set(pred["call_id"]))], pred)
+            truth = planted[planted["call_id"].isin(set(pred["call_id"]))]
+            if len(pred) and len(truth):
+                t = agreement_table(truth, pred)
                 t.insert(0, "comparison", name)
                 parts.append(t)
         sanity = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
@@ -187,7 +160,7 @@ def build(sources: list[CallSource], analyses: dict[str, dict]) -> dict[str, pd.
         "tagged_calls_with_ai_analysis": len(tagged & set(ai["call_id"])) if len(ai) else 0,
         "tagged_calls_missing_ai_analysis": len(tagged - (set(ai["call_id"]) if len(ai) else set())),
         "tags_made_with_ai_off": int((labels["llm_model"] == "").sum()),
-        "raters": ", ".join(sorted(labels["rater"].unique())),
+        "raters": ", ".join(sorted(labels["rater"].unique())) if len(labels) else "",
     }
     return {"counts": pd.DataFrame([counts]), "overview": overview, "calls": out,
             "coaching": pd.DataFrame(coaching), "agreement": agreement, "rater_agreement": irr,
@@ -267,7 +240,7 @@ def summary_markdown(results: dict[str, pd.DataFrame]) -> str:
                 lines.append(f"| {ITEM_NAMES[r['target']]} | {r['n']} | {r['agreement']:.2f} "
                              f"[{r['ci_low']:.2f}, {r['ci_high']:.2f}] | {k} |")
     else:
-        lines += ["No tagged calls with an AI analysis yet: tag calls on the dashboard, then run `salud-phase1 analyze`."]
+        lines += ["No tagged calls with an AI analysis yet: tag calls on the dashboard (and run `salud-phase1 analyze` for any call without AI answers)."]
     lines += ["", "Small samples: with 10 real calls, each item's 95% CI spans about ±0.3. "
               "Treat per-item differences as indicative."]
     return "\n".join(lines) + "\n"

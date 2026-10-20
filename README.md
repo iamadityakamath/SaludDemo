@@ -9,23 +9,26 @@ One connected pipeline: **call transcript → QA / sentiment scores → payment 
 | **1. Call analysis** | Did the agent handle each checklist item? What was the caller's sentiment, and how did the call end? | LLM (Groq `openai/gpt-oss-120b`), checked against manual tags | 10 real calls + 50 LLM-written synthetic calls |
 | **2. Propensity** | Which accounts are most likely to pay? | Traditional ML on account features + Phase 1's call-quality score | Synthetic accounts with payment histories |
 
-Phase 1's per-call export (`reports/phase1/comparison/calls.csv`) becomes Phase 2's call-quality input. The brief requires the two stages to connect rather than be separate projects.
+Phase 1's AI analyses (`phase1.ai_analyses`, joined to `big_synthetic` accounts) become Phase 2's call-quality input. The brief requires the two stages to connect rather than be separate projects.
 
-## Setup
+## Team setup
+
+Everything lives in the team's **shared Neon Postgres database** (project `salud-pipeline`, database `salud`): calls and transcripts, AI analyses and every rater's tags, plus the synthetic world for Phase 2. Teammates don't need any local data files.
 
 ```bash
+git clone https://github.com/iamadityakamath/SaludDemo && cd SaludDemo
 uv venv && uv pip install -e '.[dev]'
-cp .env.example .env        # then set GROQ_API_KEY=...
-.venv/bin/pytest
+cp .env.example .env     # paste DATABASE_URL (from the team lead); GROQ_API_KEY only if you run `analyze`
+.venv/bin/salud-phase1 dashboard --rater <your initials>
 ```
 
-Client files keep the names Salud sent them under and are **gitignored**: `docs/`, `data/Redacted Transcripts …/` and `data/BIG_Schema_Only_Handoff/`. So are generated data (`data/phase1/`, `data/phase2/`) and outputs (`reports/`).
+- **Connection string.** It's shared privately by the team lead. Never commit it; this repository is public.
+- **Real call data.** The database holds Salud's 10 redacted real calls. This Neon project isn't HIPAA-enabled, so keep access to the team, and confirm with Salud before sharing it further.
+- **Team lead only:** `salud-db setup` applies schema changes and imports local files. It's safe to rerun; it only adds what's missing.
 
 ---
 
 ## Phase 1: call analysis
-
-The script runs the LLM prompt ([`phase1/prompt.py`](src/salud_pipeline/phase1/prompt.py)) on every call. The dashboard shows those results so a person can check and correct them.
 
 ### Route 1: dashboard (review the AI's answers and tag)
 
@@ -33,38 +36,37 @@ The script runs the LLM prompt ([`phase1/prompt.py`](src/salud_pipeline/phase1/p
 .venv/bin/salud-phase1 dashboard --rater AK
 ```
 
-It opens http://127.0.0.1:8765 and listens only on this machine. It lists the 10 real and 50 synthetic calls.
+Each teammate runs it on their own laptop (http://127.0.0.1:8765). They all read and write the same database.
 
-- **Pre-filled from the script.** Every call opens with the AI analysis that `salud-phase1 analyze` saved in `reports/phase1/ai_analyses.json`:
+- **Every call opens pre-filled** with its AI analysis:
   - checklist answers, with reasons and highlighted transcript quotes
   - caller sentiment and call outcome
   - a summary and coaching tips
-- **The dashboard never calls the LLM and never writes to that file.** Calls the script hasn't analyzed yet open blank; they appear pre-filled after the next `analyze` run, with no restart needed.
-- **You check and correct.** A section is **red** when the AI's answer has no supporting quote, and turns **green** once you choose the answer yourself.
-- **Where tags are saved:** `data/phase1/reviewed_tags/real_calls.csv` and `synthetic_calls.csv`, one row per call per rater.
-  - `llm_model` records which AI answers pre-filled the form.
+- **The dashboard never calls the LLM and never changes AI analyses.**
+- **You check, correct and save.** A section is **red** when the AI's answer has no supporting quote, and turns **green** once you choose the answer yourself.
+- **Saving writes your row** in `phase1.reviewed_tags` (one row per call per rater):
+  - `llm_model` records which AI answers pre-filled it.
   - `overrides` lists the items you changed.
-  - The older `data/phase1/manual_tags/` folder (tags from before pre-filling) is kept as-is and isn't read.
+  - Raters only see their own tags.
 
 ### Route 2: script (AI analysis, then comparison)
 
 ```bash
-.venv/bin/salud-phase1 analyze             # LLM on all 60 calls -> reports/phase1/ai_analyses.json
+.venv/bin/salud-phase1 analyze             # LLM on calls without an analysis -> phase1.ai_analyses
 .venv/bin/salud-phase1 analyze --limit 20  # cap new LLM requests this run
-.venv/bin/salud-phase1 compare             # AI vs manual tags -> reports/phase1/comparison/
+.venv/bin/salud-phase1 compare             # AI vs every rater's tags -> reports/phase1/comparison/
 ```
 
-- **`analyze`** saves every call's analysis in **one JSON file keyed by call ID** (e.g. `real/0fd3661b-….txt`), with the model and prompt version.
-  - It only adds missing calls and never changes an existing entry. It refuses to run if the model or prompt version no longer matches the file.
-  - Before each run, it saves a read-only copy of the file in `reports/phase1/backups/`.
-  - It stops cleanly when Groq's daily cap is hit; run it again later to continue.
-  - Calls already analyzed on the dashboard come from the shared LLM cache (`reports/phase1/llm_cache/`) at no cost.
-- **`compare`** reads that JSON and the reviewed tags, and writes `phase1_results.xlsx` plus CSVs and `summary.md`. Because tags start from the AI's answers, **agreement = the share of AI answers the reviewer kept**, and each disagreement is a correction.
+- **`analyze`** only adds analyses for calls that have none.
+  - It never changes an existing analysis.
+  - It refuses to run if the model or prompt version differs from the stored analyses.
+  - It stops cleanly at Groq's daily cap.
+- **`compare`** reads everything from the database and writes `phase1_results.xlsx` (plus CSVs and `summary.md`) locally. With pre-filled tags, **agreement = the share of AI answers the reviewer kept**, and each disagreement is a correction.
 
 | Sheet | Contents |
 |---|---|
 | Summary | counts and average AI–human agreement: all tagged calls, real, synthetic |
-| Calls | one row per call: AI answers, reasons, evidence, needs-review flags, human answers, agree/disagree, AI and human call-quality scores, summary |
+| Calls | one row per call: AI answers, reasons, evidence, needs-review flags, human answers, agree/disagree, call-quality scores, summary |
 | Coaching | one row per AI coaching tip |
 | AI vs human | per item: agreement with 95% CI, Cohen's kappa, missing AI answers |
 | Rater agreement | per rater pair and item |
@@ -82,18 +84,15 @@ It opens http://127.0.0.1:8765 and listens only on this machine. It lists the 10
 ### The Phase 1 calls
 
 - **Real:** the 10 redacted Salud calls.
-- **Synthetic:** 50 calls written by Qwen (a different model family from the scorer) from planted labels. They're listed in [`configs/phase1_synthetic_calls.txt`](configs/phase1_synthetic_calls.txt), which is tracked so every rater tags the same calls.
-  - They were picked from 168 to cover every outcome and scenario, failures of every checklist item, and some all-pass calls.
-  - Transcripts and planted labels are in `data/phase1/synthetic_calls/`.
+- **Synthetic:** 50 calls written by Qwen (a different model family from the scorer) from planted labels, picked from 168 to cover every outcome, scenario and checklist failure. They're listed in [`configs/phase1_synthetic_calls.txt`](configs/phase1_synthetic_calls.txt).
+- **Each synthetic call is a real row** in the synthetic CRM's contact history, so its quality score joins to the account and payment data Phase 2 uses.
 
-### LLM, Groq and real calls
+### LLM and Groq
 
-- **Model:** `GROQ_MODEL` in `.env` (default `openai/gpt-oss-120b`), or any OpenAI-compatible server through `SALUD_LLM_BASE_URL` / `SALUD_LLM_MODEL` / `SALUD_LLM_API_KEY`. Only the script uses it.
-- **Editing the prompt:** change [`prompt.py`](src/salud_pipeline/phase1/prompt.py) and the definitions in [`checklist.py`](src/salud_pipeline/phase1/checklist.py), then bump `PROMPT_VERSION`. `analyze` will then redo every call.
-- **Groq free-tier limits on this key:**
-  - **200,000 tokens per day** for gpt-oss-120b. One analysis is ≈3,200 tokens, so **about 60 analyses a day**.
-  - 8,000 tokens per minute per model.
-- **Real calls:** Groq is a third-party cloud service, and the brief requires real call data to stay in a HIPAA-compliant environment. The calls are redacted, but confirm with Salud before sending them. Only `analyze` sends calls to the LLM, and it says so when it starts.
+- **Model:** `GROQ_MODEL` in `.env` (default `openai/gpt-oss-120b`), or any OpenAI-compatible server through `SALUD_LLM_BASE_URL` / `SALUD_LLM_MODEL` / `SALUD_LLM_API_KEY`. Only `analyze` uses it.
+- **Editing the prompt:** change [`prompt.py`](src/salud_pipeline/phase1/prompt.py) and the definitions in [`checklist.py`](src/salud_pipeline/phase1/checklist.py), then bump `PROMPT_VERSION`. `analyze` won't mix versions in the database.
+- **Groq free-tier limits on this key:** 200,000 tokens a day for gpt-oss-120b. One analysis is ≈3,200 tokens, so about 60 analyses a day.
+- **Real calls go to Groq,** a third-party cloud service, when analyzed. Confirm with Salud.
 
 ### Why the LLM and not ML
 
@@ -144,29 +143,53 @@ data/phase2/synthetic_world/
 
 ---
 
+---
+
+## Database (Neon Postgres)
+
+Salud's own data lives in **Microsoft SQL Server**: a Dynamics CRM database, `saludrevenue_MSCRM.dbo`, per the schema handoff. The team database mirrors that structure in Postgres and adds Phase 1.
+
+```bash
+.venv/bin/salud-db status   # row counts per table
+.venv/bin/salud-db setup    # team lead: apply new migrations, import local files (add-only, safe to rerun)
+```
+
+| Schema | Tables |
+|---|---|
+| `big_synthetic` | Salud's 6 CRM tables (accounts, contact history, account↔contact bridge, receipts, QA reviews, guarantors), same names as their SQL Server script, filled with synthetic data |
+| `phase1` | `calls` (real + synthetic, with transcripts and planted labels), `ai_analyses`, `ai_checklist`, `ai_coaching`, `reviewed_tags`, `legacy_manual_tags` (tags made before AI pre-fill; not used in comparisons) |
+
+- **Connections:** `DATABASE_URL` (pooled) is used by the dashboard and scripts. `DATABASE_URL_UNPOOLED` (direct) is used by `salud-db` for schema changes.
+- **SQL Server → Postgres:** `uniqueidentifier`→`uuid`, `nvarchar`→`varchar`/`text`, `money`→`numeric(19,4)`, `datetime`→`timestamp`, `bit`→`boolean`. Names are unchanged, so moving to Salud's SQL Server is a type swap.
+- **Schema changes:** add a new numbered file in `db/migrations/` and run `salud-db setup`. Applied migrations are recorded in `public.schema_migrations`.
+- **Tests** run against the Neon branch `tests` (`DATABASE_URL_TEST` in `.env`), a copy-on-write clone, never the team's live data. Each test removes what it created.
+- **Backups:** Neon keeps 6 hours of history on this plan for point-in-time restore.
+
 ## Layout
 
 ```
 src/salud_pipeline/
   paths.py              every project location
   llm_client.py         OpenAI-compatible client (.env, Groq defaults, retries, max_tokens)
+  db.py                 salud-db setup | status (migrations, one-time import)
   phase1/
-    calls.py            the 60 Phase 1 calls and where their tags are saved
+    store.py            the team database for Phase 1 (calls, transcripts, AI analyses, tags)
     checklist.py        checklist items, outcomes, definitions
-    prompt.py           the LLM prompt, response checking, LLM cache
-    dashboard.py        route 1: dashboard server, reads ai_analyses.json (static/dashboard.html: the page)
-    analyze.py          route 2, step 1: LLM on every call -> ai_analyses.json
-    compare.py          route 2, step 2: AI vs manual tags -> Excel / CSV
+    prompt.py           the LLM prompt, response checking, local LLM cache
+    dashboard.py        route 1: dashboard server   (static/dashboard.html: the page)
+    analyze.py          route 2, step 1: LLM on every call -> database
+    compare.py          route 2, step 2: AI vs tags -> Excel / CSV
     metrics.py          agreement, kappa, rater consensus
+    calls.py            locating the Phase 1 call files (for the one-time import)
     cli.py              salud-phase1 dashboard | analyze | compare
   phase2/
     schema.py           tables and option codes from Salud's schema handoff
     outcome_labels.py   self-pay outcome labels at account grain
     synthetic/          synthetic world generator (salud-synth); also wrote the Phase 1 calls
+db/migrations/          Postgres schema as code (001 big_synthetic, 002 phase1, 003 shared team db, 004 planted labels)
 configs/                phase1_synthetic_calls.txt, synthetic_world*.json
 results/                tracked results (Phase 1 LLM vs ML decision)
 branding/               dashboard logo
-tests/
-data/                   client folders + phase1/ and phase2/ generated data (gitignored)
-reports/phase1/         ai_analyses.json, backups/, llm_cache/, comparison/ (gitignored)
+tests/                  database tests use the Neon 'tests' branch
+data/, reports/         local source files and outputs (gitignored)
 ```
