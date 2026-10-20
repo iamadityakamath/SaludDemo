@@ -1,15 +1,14 @@
-"""Phase 1 route 1: the dashboard that assists manual tagging.
+"""Phase 1 route 1: the dashboard for reviewing and tagging calls.
 
     salud-phase1 dashboard --rater AK
 
-Lists the 60 Phase 1 calls (calls.py) with filters, serves on 127.0.0.1 only, and saves each rater's tags
-to the manual-tags CSVs. The Analyze button runs the same one-prompt LLM review as the script route
-(prompt.py) to pre-fill the checklist, cite the transcript turns behind each answer and suggest coaching
-tips. The LLM runs only when the rater presses Analyze. Saved rows record which model pre-filled them
-(llm_model) and which items the rater changed (overrides); tags saved without Analyze have a blank llm_model.
+Lists the 60 Phase 1 calls (calls.py) with filters and serves on 127.0.0.1 only. Each call opens pre-filled
+with the AI analysis that `salud-phase1 analyze` saved in reports/phase1/ai_analyses.json: checklist answers,
+the transcript quotes behind them, sentiment, outcome and coaching tips. The rater checks and corrects the
+answers and saves. The dashboard never calls the LLM and never writes to ai_analyses.json.
 
-Real calls are redacted, but Analyze still sends them to the configured LLM (e.g. Groq); the page asks
-once per browser session before the first real call goes to a non-local provider.
+Saved tags go to data/phase1/reviewed_tags/ (one row per call per rater). Each row records the model whose
+answers pre-filled it (llm_model) and which items the rater changed (overrides).
 """
 
 from __future__ import annotations
@@ -24,12 +23,11 @@ from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
 
-from ..llm_client import LLMEndpoint
-from ..paths import LLM_CACHE, REPO_ROOT
+from ..paths import AI_ANALYSES, REPO_ROOT
 from .calls import CallSource
 from .checklist import (ITEM_DEFINITIONS, LABEL_COLUMNS, OUTCOMES, SENTIMENTS, TARGETS, TRANSCRIPT_ITEMS,
                         clean_transcript)
-from .prompt import CallAssistant, split_turns
+from .prompt import split_turns
 
 BRANDING_DIR = REPO_ROOT / "branding"
 LOGO_NAMES = ["logo.svg", "logo.png", "logo.webp", "logo.jpg", "logo.jpeg"]
@@ -112,65 +110,42 @@ class LabelStore:
             tmp.replace(src.labels_csv)
 
 
-class Suggester:
-    """CallAssistant with single-flight requests. Never calls the LLM unless asked."""
+class AIAnalyses:
+    """Read-only view of the script's AI analyses (ai_analyses.json). The dashboard never writes to it.
 
-    def __init__(self, endpoint: LLMEndpoint | None, cache_dir: Path):
-        self.endpoint = endpoint
-        self.assistant = CallAssistant(endpoint, cache_dir) if endpoint and endpoint.model else None
-        self._inflight: dict[str, threading.Event] = {}
+    The file is re-read when it changes on disk, so calls added later by `salud-phase1 analyze` show up
+    after a page reload without restarting the dashboard.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self._mtime: float | None = None
+        self._data: dict = {}
         self._lock = threading.Lock()
 
-    def blocked_reason(self, real: bool) -> str | None:
-        if self.assistant is None:
-            return "No LLM configured. Add GROQ_API_KEY to .env and restart."
-        return None
+    def _load(self) -> dict:
+        with self._lock:
+            mtime = self.path.stat().st_mtime if self.path.exists() else None
+            if mtime != self._mtime:
+                self._data = json.loads(self.path.read_text()) if mtime else {}
+                self._mtime = mtime
+            return self._data
+
+    def get(self, call_id: str) -> dict | None:
+        entry = self._load().get("calls", {}).get(call_id)
+        return entry["analysis"] if entry else None
 
     def info(self) -> dict:
-        base = {"model": self.endpoint.model if self.assistant else None,
-                "provider": self.endpoint.provider if self.assistant else None,
-                "remote": bool(self.assistant) and not self.endpoint.is_local}
-        return base | {"real": self.blocked_reason(True), "synthetic": self.blocked_reason(False)}
-
-    def cached(self, text: str, real: bool) -> dict | None:
-        """Previous analysis from the local cache; never calls the LLM."""
-        if self.blocked_reason(real):
-            return None
-        return self.assistant.cached(text)
-
-    def review(self, text: str, real: bool, force: bool = False) -> dict:
-        """Runs only on an explicit Analyze click. Concurrent clicks share one LLM call."""
-        reason = self.blocked_reason(real)
-        if reason:
-            return {"disabled": reason}
-        key = str(self.assistant._path(text))
-        with self._lock:
-            ev = self._inflight.get(key)
-            owner = ev is None
-            if owner:
-                ev = self._inflight[key] = threading.Event()
-        if not owner:
-            ev.wait(timeout=180)
-            return self._safe(text, force=False)
-        try:
-            return self._safe(text, force)
-        finally:
-            ev.set()
-            with self._lock:
-                self._inflight.pop(key, None)
-
-    def _safe(self, text: str, force: bool) -> dict:
-        try:
-            return self.assistant.review(text, force=force)
-        except (RuntimeError, ValueError) as e:
-            return {"error": str(e)}
+        d = self._load()
+        return {"model": d.get("model"), "prompt_version": d.get("prompt_version"),
+                "analyzed": len(d.get("calls", {})), "file": self.path.name}
 
 
 def _logo_path() -> Path | None:
     return next((BRANDING_DIR / n for n in LOGO_NAMES if (BRANDING_DIR / n).exists()), None)
 
 
-def make_handler(store: LabelStore, rater: str, suggester: Suggester):
+def make_handler(store: LabelStore, rater: str, ai: AIAnalyses):
     page = files("salud_pipeline.phase1").joinpath("static/dashboard.html").read_text()
     config = {"rater": rater, "items": TRANSCRIPT_ITEMS, "definitions": ITEM_DEFINITIONS,
               "sentiments": SENTIMENTS, "outcomes": OUTCOMES,
@@ -194,7 +169,7 @@ def make_handler(store: LabelStore, rater: str, suggester: Suggester):
             if url.path in ("/", "/index.html"):
                 self._send(200, page.encode(), "text/html; charset=utf-8")
             elif url.path == "/api/state":
-                self._json({"config": config | {"llm": suggester.info(), "has_logo": _logo_path() is not None},
+                self._json({"config": config | {"ai": ai.info(), "has_logo": _logo_path() is not None},
                             "calls": store.calls(), "labels": store.labels_for(rater)})
             elif url.path == "/api/call":
                 cid = q.get("id", [""])[0]
@@ -202,12 +177,11 @@ def make_handler(store: LabelStore, rater: str, suggester: Suggester):
                     return self._json({"error": "unknown call"}, 404)
                 self._json(store.transcript(cid))
             elif url.path == "/api/analysis":
-                # Cached analysis only (shown when a call opens); never calls the LLM.
+                # The script's saved analysis for this call (read-only); the dashboard never calls the LLM.
                 cid = q.get("id", [""])[0]
                 if store.call(cid) is None:
                     return self._json({"error": "unknown call"}, 404)
-                cached = suggester.cached(store.transcript(cid)["text"], store.source_of(cid).real)
-                self._json(cached or {"none": True})
+                self._json(ai.get(cid) or {"none": True})
             elif url.path == "/brand/logo":
                 p = _logo_path()
                 if p is None:
@@ -218,17 +192,6 @@ def make_handler(store: LabelStore, rater: str, suggester: Suggester):
 
         def do_POST(self):
             path = urlparse(self.path).path
-            if path == "/api/analyze":
-                # The only route that calls the LLM: the page's Analyze button.
-                try:
-                    body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
-                    cid = body["id"]
-                except (KeyError, json.JSONDecodeError) as e:
-                    return self._json({"error": str(e)}, 400)
-                if store.call(cid) is None:
-                    return self._json({"error": "unknown call"}, 404)
-                return self._json(suggester.review(store.transcript(cid)["text"], store.source_of(cid).real,
-                                                   force=bool(body.get("force"))))
             if path != "/api/label":
                 return self._json({"error": "not found"}, 404)
             try:
@@ -244,8 +207,7 @@ def make_handler(store: LabelStore, rater: str, suggester: Suggester):
     return Handler
 
 
-def serve(sources: list[CallSource], rater: str, port: int = 8765, endpoint: LLMEndpoint | None = None,
-          cache_dir: Path | None = None) -> ThreadingHTTPServer:
+def serve(sources: list[CallSource], rater: str, port: int = 8765,
+          ai_file: Path = AI_ANALYSES) -> ThreadingHTTPServer:
     store = LabelStore([s for s in sources if s.transcripts_dir.exists()])
-    suggester = Suggester(endpoint, cache_dir or LLM_CACHE)
-    return ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, rater, suggester))
+    return ThreadingHTTPServer(("127.0.0.1", port), make_handler(store, rater, AIAnalyses(ai_file)))

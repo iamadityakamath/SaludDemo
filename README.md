@@ -25,26 +25,26 @@ Client files keep the names Salud sent them under and are **gitignored**: `docs/
 
 ## Phase 1: call analysis
 
-The same LLM prompt ([`phase1/prompt.py`](src/salud_pipeline/phase1/prompt.py)) powers both routes.
+The script runs the LLM prompt ([`phase1/prompt.py`](src/salud_pipeline/phase1/prompt.py)) on every call. The dashboard shows those results so a person can check and correct them.
 
-### Route 1: dashboard (assists manual tagging)
+### Route 1: dashboard (review the AI's answers and tag)
 
 ```bash
-.venv/bin/salud-phase1 dashboard --rater AK            # Analyze button can pre-fill the checklist
-.venv/bin/salud-phase1 dashboard --rater AK --no-llm   # tag with the AI switched off
+.venv/bin/salud-phase1 dashboard --rater AK
 ```
 
-It opens http://127.0.0.1:8765 and listens only on this machine. It lists the 10 real calls and 50 synthetic calls.
+It opens http://127.0.0.1:8765 and listens only on this machine. It lists the 10 real and 50 synthetic calls.
 
-- **Filters:** by source, by status, and by call-ID search.
-- **Analyze** (top right, or ⌘/Ctrl+Enter) runs the LLM and returns:
-  - checklist answers, with reasons and verified transcript quotes
+- **Pre-filled from the script.** Every call opens with the AI analysis that `salud-phase1 analyze` saved in `reports/phase1/ai_analyses.json`:
+  - checklist answers, with reasons and highlighted transcript quotes
   - caller sentiment and call outcome
   - a summary and coaching tips
-- **Flags:** a section is **red** when the AI's answer has no supporting quote, and turns **green** once you choose the answer yourself.
-- **Where tags are saved:** `data/phase1/manual_tags/real_calls.csv` and `synthetic_calls.csv`, one row per call per rater.
-  - `llm_model` is blank when you tagged without pressing Analyze. These are the fairest benchmark, because pre-filled tags tend to follow the AI.
-  - `overrides` lists the items you changed from the AI's answer.
+- **The dashboard never calls the LLM and never writes to that file.** Calls the script hasn't analyzed yet open blank; they appear pre-filled after the next `analyze` run, with no restart needed.
+- **You check and correct.** A section is **red** when the AI's answer has no supporting quote, and turns **green** once you choose the answer yourself.
+- **Where tags are saved:** `data/phase1/reviewed_tags/real_calls.csv` and `synthetic_calls.csv`, one row per call per rater.
+  - `llm_model` records which AI answers pre-filled the form.
+  - `overrides` lists the items you changed.
+  - The older `data/phase1/manual_tags/` folder (tags from before pre-filling) is kept as-is and isn't read.
 
 ### Route 2: script (AI analysis, then comparison)
 
@@ -55,14 +55,15 @@ It opens http://127.0.0.1:8765 and listens only on this machine. It lists the 10
 ```
 
 - **`analyze`** saves every call's analysis in **one JSON file keyed by call ID** (e.g. `real/0fd3661b-….txt`), with the model and prompt version.
-  - It resumes: calls already in the file are skipped.
+  - It only adds missing calls and never changes an existing entry. It refuses to run if the model or prompt version no longer matches the file.
+  - Before each run, it saves a read-only copy of the file in `reports/phase1/backups/`.
   - It stops cleanly when Groq's daily cap is hit; run it again later to continue.
   - Calls already analyzed on the dashboard come from the shared LLM cache (`reports/phase1/llm_cache/`) at no cost.
-- **`compare`** reads that JSON and the manual tags, and writes `phase1_results.xlsx` plus CSVs and `summary.md`:
+- **`compare`** reads that JSON and the reviewed tags, and writes `phase1_results.xlsx` plus CSVs and `summary.md`. Because tags start from the AI's answers, **agreement = the share of AI answers the reviewer kept**, and each disagreement is a correction.
 
 | Sheet | Contents |
 |---|---|
-| Summary | counts and average AI–human agreement: all tagged calls, real, synthetic, tagged with AI off |
+| Summary | counts and average AI–human agreement: all tagged calls, real, synthetic |
 | Calls | one row per call: AI answers, reasons, evidence, needs-review flags, human answers, agree/disagree, AI and human call-quality scores, summary |
 | Coaching | one row per AI coaching tip |
 | AI vs human | per item: agreement with 95% CI, Cohen's kappa, missing AI answers |
@@ -87,12 +88,12 @@ It opens http://127.0.0.1:8765 and listens only on this machine. It lists the 10
 
 ### LLM, Groq and real calls
 
-- **Model:** `GROQ_MODEL` in `.env` (default `openai/gpt-oss-120b`), or any OpenAI-compatible server through `SALUD_LLM_BASE_URL` / `SALUD_LLM_MODEL` / `SALUD_LLM_API_KEY`.
+- **Model:** `GROQ_MODEL` in `.env` (default `openai/gpt-oss-120b`), or any OpenAI-compatible server through `SALUD_LLM_BASE_URL` / `SALUD_LLM_MODEL` / `SALUD_LLM_API_KEY`. Only the script uses it.
 - **Editing the prompt:** change [`prompt.py`](src/salud_pipeline/phase1/prompt.py) and the definitions in [`checklist.py`](src/salud_pipeline/phase1/checklist.py), then bump `PROMPT_VERSION`. `analyze` will then redo every call.
 - **Groq free-tier limits on this key:**
-  - **200,000 tokens per day** for gpt-oss-120b. One analysis is ≈3,200 tokens, so **about 60 analyses a day**, shared by the dashboard and the script.
+  - **200,000 tokens per day** for gpt-oss-120b. One analysis is ≈3,200 tokens, so **about 60 analyses a day**.
   - 8,000 tokens per minute per model.
-- **Real calls:** Groq is a third-party cloud service, and the brief requires real call data to stay in a HIPAA-compliant environment. The calls are redacted, but confirm with Salud before sending them. The dashboard asks once per browser session; `analyze` says so when it starts.
+- **Real calls:** Groq is a third-party cloud service, and the brief requires real call data to stay in a HIPAA-compliant environment. The calls are redacted, but confirm with Salud before sending them. Only `analyze` sends calls to the LLM, and it says so when it starts.
 
 ### Why the LLM and not ML
 
@@ -153,7 +154,7 @@ src/salud_pipeline/
     calls.py            the 60 Phase 1 calls and where their tags are saved
     checklist.py        checklist items, outcomes, definitions
     prompt.py           the LLM prompt, response checking, LLM cache
-    dashboard.py        route 1: dashboard server   (static/dashboard.html: the page)
+    dashboard.py        route 1: dashboard server, reads ai_analyses.json (static/dashboard.html: the page)
     analyze.py          route 2, step 1: LLM on every call -> ai_analyses.json
     compare.py          route 2, step 2: AI vs manual tags -> Excel / CSV
     metrics.py          agreement, kappa, rater consensus
@@ -167,5 +168,5 @@ results/                tracked results (Phase 1 LLM vs ML decision)
 branding/               dashboard logo
 tests/
 data/                   client folders + phase1/ and phase2/ generated data (gitignored)
-reports/phase1/         llm_cache/, ai_analyses.json, comparison/ (gitignored)
+reports/phase1/         ai_analyses.json, backups/, llm_cache/, comparison/ (gitignored)
 ```

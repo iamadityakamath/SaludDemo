@@ -6,7 +6,6 @@ import urllib.request
 import pandas as pd
 import pytest
 
-from salud_pipeline.llm_client import LLMEndpoint
 from salud_pipeline.phase1.calls import CallSource
 from salud_pipeline.phase1.dashboard import serve
 from salud_pipeline.phase1.compare import load_labels
@@ -35,8 +34,8 @@ def setup(tmp_path):
                CallSource("synthetic", "Synthetic", syn_dir, syn_csv, real=False)]
     servers = []
 
-    def start(rater, endpoint=None):
-        httpd = serve(sources, rater, port=0, endpoint=endpoint, cache_dir=tmp_path / "cache")
+    def start(rater, ai_file=None):
+        httpd = serve(sources, rater, port=0, ai_file=ai_file or tmp_path / "no_ai.json")
         threading.Thread(target=httpd.serve_forever, daemon=True).start()
         servers.append(httpd)
         return f"http://127.0.0.1:{httpd.server_port}"
@@ -99,13 +98,52 @@ def test_raters_are_blind_to_each_other(setup):
     assert sorted(df[df["file_id"] == "a.txt"]["rater"]) == ["AK", "RM"]
 
 
-def test_ai_available_for_both_sources(setup):
+AI = {"ok": True, "model": "gpt-test",
+      "checklist": {k: {"answer": "Yes", "reason": "r", "evidence": [{"turn": 1, "quote": "Hello."}]}
+                    for k in ["greeting", "culture", "capturing_data", "understanding_needs", "correct_info",
+                              "first_contact_resolution", "compliance"]},
+      "sentiment": {"label": "neutral", "evidence": []}, "outcome": {"label": "paid", "evidence": []},
+      "summary": "s", "coaching": []}
+
+
+def _ai_file(tmp_path, call_ids):
+    f = tmp_path / "ai_analyses.json"
+    f.write_text(json.dumps({"model": "gpt-test", "prompt_version": "v", "calls": {
+        cid: {"source": cid.split("/")[0], "file_id": cid.split("/")[1], "analysis": AI} for cid in call_ids}}))
+    return f
+
+
+def test_serves_ai_answers_from_file_and_never_writes_it(setup, tmp_path):
+    start, real_csv, *_ = setup
+    f = _ai_file(tmp_path, ["real/a.txt"])
+    before = f.read_bytes()
+    url = start("AK", ai_file=f)
+    st = _get(url + "/api/state")["config"]["ai"]
+    assert st["analyzed"] == 1 and st["model"] == "gpt-test"
+    assert _get(url + "/api/analysis?id=real/a.txt")["checklist"]["greeting"]["answer"] == "Yes"
+    assert _get(url + "/api/analysis?id=real/b.txt") == {"none": True}
+    _post(url, {"id": "real/a.txt", "values": {**GOOD, "greeting": "No"},
+                "llm": {"model": "gpt-test", "answers": {"greeting": "Yes", "culture": "Yes"}}})
+    assert f.read_bytes() == before                      # the AI file is untouched
+    row = pd.read_csv(real_csv, dtype=str, keep_default_na=False).query("file_id == 'a.txt'").iloc[0]
+    assert row["llm_model"] == "gpt-test" and row["overrides"] == "greeting;culture"  # GOOD has culture No
+    with pytest.raises(urllib.error.HTTPError) as e:     # the dashboard can no longer call the LLM
+        urllib.request.urlopen(urllib.request.Request(url + "/api/analyze", data=b'{"id": "real/a.txt"}'))
+    assert e.value.code == 404
+
+
+def test_picks_up_calls_added_to_the_file_later(setup, tmp_path):
     start, *_ = setup
-    remote = LLMEndpoint(base_url="https://api.groq.com/openai/v1", model="m", api_key="k")
-    llm = _get(start("AK", endpoint=remote) + "/api/state")["config"]["llm"]
-    assert llm["real"] is None and llm["synthetic"] is None
-    assert llm["remote"] is True and llm["provider"] == "Groq"  # the page confirms once before sending real calls
-    assert _get(start("AK") + "/api/state")["config"]["llm"]["real"].startswith("No LLM configured")
+    f = _ai_file(tmp_path, ["real/a.txt"])
+    url = start("AK", ai_file=f)
+    assert _get(url + "/api/analysis?id=synthetic/s1.txt") == {"none": True}
+    import os, time
+    data = json.loads(f.read_text())
+    data["calls"]["synthetic/s1.txt"] = {"source": "synthetic", "file_id": "s1.txt", "analysis": AI}
+    f.write_text(json.dumps(data))
+    os.utime(f, (time.time() + 5, time.time() + 5))  # make sure the change is visible on coarse clocks
+    assert _get(url + "/api/analysis?id=synthetic/s1.txt")["checklist"]
+    assert _get(url + "/api/state")["config"]["ai"]["analyzed"] == 2
 
 
 @pytest.mark.parametrize("payload", [

@@ -1,18 +1,13 @@
 import json
 import re
 import threading
-import urllib.error
-import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import pandas as pd
 import pytest
 
 from salud_pipeline import llm_client
 from salud_pipeline.llm_client import LLMEndpoint, load_dotenv
 from salud_pipeline.phase1.prompt import CallAssistant, parse, split_turns
-from salud_pipeline.phase1.calls import CallSource
-from salud_pipeline.phase1.dashboard import serve
 from salud_pipeline.phase1.checklist import TRANSCRIPT_ITEMS
 
 TEXT = ("Agent: Thank you for calling billing, this is [REDACTED NAME]. How can I help?\n\n"
@@ -115,84 +110,3 @@ def test_assistant_caches(llm_url, tmp_path):
     r1 = a.review(TEXT)
     r2 = a.review(TEXT)
     assert r1 == r2 and FakeLLM.calls == 1 and r1["coaching"][0]["tip"] == "Keep it up."
-
-
-def _dashboard(tmp_path, endpoint, real):
-    tdir = tmp_path / "calls"
-    tdir.mkdir(exist_ok=True)
-    (tdir / "a.txt").write_text(TEXT)
-    (tdir / "b.txt").write_text(TEXT.replace("billing", "accounts"))
-    csv = tmp_path / "labels.csv"
-    key = "real" if real else "synthetic"
-    httpd = serve([CallSource(key, key.title(), tdir, csv, real=real)], "AK", port=0, endpoint=endpoint,
-                  cache_dir=tmp_path / "cache")
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    return httpd, f"http://127.0.0.1:{httpd.server_port}", csv, key
-
-
-def _get(url):
-    return json.loads(urllib.request.urlopen(url).read())
-
-
-def _post(url, path, payload):
-    req = urllib.request.Request(url + path, data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json"})
-    return json.loads(urllib.request.urlopen(req).read())
-
-
-def test_llm_runs_only_on_analyze(llm_url, tmp_path):
-    httpd, url, csv, key = _dashboard(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=False)
-    try:
-        # Opening the page and a call, and reading its analysis, never call the LLM.
-        _get(url + "/api/state")
-        _get(url + f"/api/call?id={key}/a.txt")
-        assert _get(url + f"/api/analysis?id={key}/a.txt") == {"none": True}
-        assert FakeLLM.calls == 0
-        # GET on the analyze route does nothing.
-        with pytest.raises(urllib.error.HTTPError):
-            urllib.request.urlopen(url + f"/api/analyze?id={key}/a.txt")
-        assert FakeLLM.calls == 0
-        # Analyze: one LLM call; afterwards the analysis is served from cache.
-        s = _post(url, "/api/analyze", {"id": f"{key}/a.txt"})
-        assert s["checklist"]["greeting"]["answer"] == "Yes" and s["analyzed_at"]
-        assert FakeLLM.calls == 1
-        assert _get(url + f"/api/analysis?id={key}/a.txt")["checklist"]
-        _post(url, "/api/analyze", {"id": f"{key}/a.txt"})            # cached
-        assert FakeLLM.calls == 1
-        _post(url, "/api/analyze", {"id": f"{key}/a.txt", "force": True})  # Re-analyze
-        assert FakeLLM.calls == 2
-        # The other call was never touched (no background prefetch).
-        assert _get(url + f"/api/analysis?id={key}/b.txt") == {"none": True}
-    finally:
-        httpd.shutdown()
-
-
-def test_save_records_provenance(llm_url, tmp_path):
-    httpd, url, csv, key = _dashboard(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=False)
-    try:
-        values = {k: "Yes" for k in TRANSCRIPT_ITEMS} | {"greeting": "No", "sentiment": "neutral", "outcome": "paid"}
-        llm = {"model": "fake", "answers": {k: "Yes" for k in TRANSCRIPT_ITEMS} | {"sentiment": "neutral", "outcome": "paid"}}
-        _post(url, "/api/label", {"id": f"{key}/a.txt", "values": values, "llm": llm})
-        row = pd.read_csv(csv, dtype=str, keep_default_na=False).query("file_id == 'a.txt'").iloc[0]
-        assert row["llm_model"] == "fake" and row["overrides"] == "greeting"
-    finally:
-        httpd.shutdown()
-
-
-def test_real_calls_analyzed_like_synthetic(llm_url, tmp_path):
-    httpd, url, _, key = _dashboard(tmp_path, LLMEndpoint(base_url=llm_url, model="fake", api_key=None), real=True)
-    try:
-        assert _get(url + "/api/state")["config"]["llm"]["real"] is None
-        assert _get(url + f"/api/analysis?id={key}/a.txt") == {"none": True} and FakeLLM.calls == 0
-        assert _post(url, "/api/analyze", {"id": f"{key}/a.txt"})["checklist"]["greeting"]["answer"] == "Yes"
-        assert FakeLLM.calls == 1
-    finally:
-        httpd.shutdown()
-
-
-def test_no_llm_configured(tmp_path):
-    httpd, url, _, _ = _dashboard(tmp_path, None, real=False)
-    try:
-        assert "GROQ_API_KEY" in _get(url + "/api/state")["config"]["llm"]["synthetic"]
-    finally:
-        httpd.shutdown()

@@ -247,6 +247,9 @@ def summary_markdown(results: dict[str, pd.DataFrame]) -> str:
              f"raters: {c['raters'] or 'none yet'}",
              f"- Tagged calls missing an AI analysis: {c['tagged_calls_missing_ai_analysis']}",
              f"- Tags made with the AI off: {c['tags_made_with_ai_off']}", ""]
+    if c["calls_tagged"] and c["tags_made_with_ai_off"] == 0:
+        lines += ["Tags were made by reviewing the AI's pre-filled answers, so **agreement = share of AI answers "
+                  "the reviewer kept**; each disagreement is a correction (see the `overrides` column).", ""]
     ov = results["overview"]
     if len(ov):
         lines += ["## AI vs human (averages)", "", "| group | calls | checklist agreement | checklist kappa | sentiment | outcome |",

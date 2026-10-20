@@ -1,8 +1,7 @@
 """Phase 1: call analysis. Two routes.
 
-Route 1, dashboard (assists manual tagging):
-    salud-phase1 dashboard --rater AK            # Analyze button pre-fills the checklist
-    salud-phase1 dashboard --rater AK --no-llm   # tag with the AI switched off
+Route 1, dashboard (review the AI's answers and tag):
+    salud-phase1 dashboard --rater AK   # calls open pre-filled from ai_analyses.json; saves go to reviewed_tags/
 
 Route 2, script (AI analysis of every call, then the comparison):
     salud-phase1 analyze      # LLM on the 60 Phase 1 calls -> reports/phase1/ai_analyses.json
@@ -19,7 +18,7 @@ import sys
 from pathlib import Path
 
 from ..llm_client import LLMEndpoint
-from ..paths import AI_ANALYSES, COMPARISON, LLM_CACHE, PHASE1_SYNTHETIC_CALLS, REAL_TRANSCRIPTS
+from ..paths import AI_ANALYSES, AI_BACKUPS, COMPARISON, LLM_CACHE, PHASE1_SYNTHETIC_CALLS, REAL_TRANSCRIPTS
 from .calls import phase1_sources
 
 
@@ -31,9 +30,8 @@ def cmd_dashboard(args) -> None:
     sources = [s for s in phase1_sources(args.calls) if s.transcripts_dir.exists()]
     if not sources:
         sys.exit(f"No transcripts found in {REAL_TRANSCRIPTS} or {args.calls / 'transcripts'}")
-    endpoint = None if args.no_llm else LLMEndpoint()
     try:
-        httpd = serve(sources, args.rater.strip(), args.port, endpoint=endpoint, cache_dir=LLM_CACHE)
+        httpd = serve(sources, args.rater.strip(), args.port)
     except OSError as e:
         if e.errno != 48 and "in use" not in str(e):
             raise
@@ -41,8 +39,10 @@ def cmd_dashboard(args) -> None:
                  f"Stop it with Ctrl+C in its terminal (or `lsof -ti:{args.port} | xargs kill`), "
                  f"or pick another port with --port {args.port + 1}.")
     url = f"http://127.0.0.1:{httpd.server_port}/"
-    llm = "off" if endpoint is None else f"{endpoint.provider} / {endpoint.model or 'no model set'}"
-    print(f"Rater {args.rater}. LLM: {llm}")
+    from .analyze import load
+    ai = load(AI_ANALYSES)
+    print(f"Rater {args.rater}. AI answers from {AI_ANALYSES.name}: {len(ai.get('calls', {}))} calls "
+          f"({ai.get('model') or 'none yet'}; read-only)")
     for s in sources:
         print(f"  {s.label:9s} {len(s.files()):3d} calls  -> tags saved to {s.labels_csv}")
     print(f"Open {url}  (Ctrl+C to stop)")
@@ -64,6 +64,14 @@ def cmd_analyze(args) -> None:
     ep.max_retries = 8  # wait out per-minute rate limits instead of failing
     print(f"Analyzing Phase 1 calls with {ep.provider} / {ep.model} (prompt {PROMPT_VERSION}). "
           "Real calls are included and sent to this provider.")
+    if AI_ANALYSES.exists():  # read-only copy before this run adds anything
+        import shutil
+        from datetime import datetime
+        AI_BACKUPS.mkdir(parents=True, exist_ok=True)
+        backup = AI_BACKUPS / f"ai_analyses_{datetime.now():%Y-%m-%d_%H%M%S}.json"
+        shutil.copy2(AI_ANALYSES, backup)
+        backup.chmod(0o444)
+        print(f"Backed up the current file to {backup.relative_to(AI_ANALYSES.parent)}")
     c = run(phase1_sources(args.calls), CallAssistant(ep, LLM_CACHE), AI_ANALYSES, limit=args.limit)
     print(f"\n{c['in_file']} of {c['calls']} calls now in {AI_ANALYSES}")
     print(f"  this run: {c['new_llm_requests']} new LLM requests, {c['from_cache']} from cache, "
@@ -94,11 +102,10 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    d = sub.add_parser("dashboard", help="route 1: dashboard that assists manual tagging")
+    d = sub.add_parser("dashboard", help="route 1: review the AI's answers and tag calls")
     d.add_argument("--rater", required=True, help="your initials; each rater's tags are kept separately")
     d.add_argument("--port", type=int, default=8765)
     d.add_argument("--no-browser", action="store_true")
-    d.add_argument("--no-llm", action="store_true", help="hide AI suggestions while tagging")
 
     a = sub.add_parser("analyze", help="route 2, step 1: LLM analysis of every call -> JSON")
     a.add_argument("--limit", type=int, help="maximum new LLM requests this run")

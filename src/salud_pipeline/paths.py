@@ -19,13 +19,16 @@ SCHEMA_HANDOFF = DATA / "BIG_Schema_Only_Handoff"
 # Phase 1: call analysis
 PHASE1_DATA = DATA / "phase1"
 PHASE1_SYNTHETIC_CALLS = PHASE1_DATA / "synthetic_calls"       # LLM-written calls (+ their synthetic world)
-MANUAL_TAGS = PHASE1_DATA / "manual_tags"
-REAL_TAGS = MANUAL_TAGS / "real_calls.csv"
-SYNTHETIC_TAGS = MANUAL_TAGS / "synthetic_calls.csv"
+# Tags saved from the dashboard after reviewing the AI's pre-filled answers. (The older manual_tags/ folder
+# holds earlier tags made before the dashboard pre-filled from ai_analyses.json; nothing reads it.)
+REVIEWED_TAGS = PHASE1_DATA / "reviewed_tags"
+REAL_TAGS = REVIEWED_TAGS / "real_calls.csv"
+SYNTHETIC_TAGS = REVIEWED_TAGS / "synthetic_calls.csv"
 PHASE1_CALL_LIST = CONFIGS / "phase1_synthetic_calls.txt"     # the 50 synthetic calls to tag (tracked)
 PHASE1_REPORTS = REPO_ROOT / "reports" / "phase1"
 LLM_CACHE = PHASE1_REPORTS / "llm_cache"                       # one file per analyzed transcript
 AI_ANALYSES = PHASE1_REPORTS / "ai_analyses.json"              # script output: every call's AI analysis
+AI_BACKUPS = PHASE1_REPORTS / "backups"                         # read-only copies of ai_analyses.json
 COMPARISON = PHASE1_REPORTS / "comparison"                     # script output: AI vs manual tags
 
 # Phase 2: propensity

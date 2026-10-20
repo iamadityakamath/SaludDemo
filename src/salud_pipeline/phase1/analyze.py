@@ -1,6 +1,6 @@
 """Phase 1 route 2, step 1: run the LLM on every Phase 1 call and save the results in one JSON file.
 
-    salud-phase1 analyze             # all 60 calls; resumes, skipping calls already in the file
+    salud-phase1 analyze             # all 60 calls; only adds calls missing from the file
     salud-phase1 analyze --limit 20  # at most 20 new LLM requests this run (Groq free tier: ~60 a day)
 
 Output: reports/phase1/ai_analyses.json
@@ -9,8 +9,9 @@ Output: reports/phase1/ai_analyses.json
      "calls": {"real/<file>.txt": {"source": "real", "file_id": "<file>.txt", "analysis": {...}}, ...}}
 
 Each analysis holds the checklist answers with reasons and verified transcript quotes, caller sentiment,
-call outcome, a summary and coaching tips (see prompt.py). Calls already analyzed with the same model
-and prompt version, here or on the dashboard, come from the LLM cache at no cost.
+call outcome, a summary and coaching tips (see prompt.py). Existing entries are never changed: a run only
+adds calls that are missing, and it refuses to run if the model or prompt version no longer matches the
+file. The dashboard reads this file but never writes to it.
 """
 
 from __future__ import annotations
@@ -44,10 +45,11 @@ def run(sources: list[CallSource], assistant: CallAssistant, out: Path, limit: i
     data = load(out)
     model = assistant.endpoint.model
     if data.get("calls") and (data.get("model"), data.get("prompt_version")) != (model, PROMPT_VERSION):
-        if progress:
-            print(f"Existing {out.name} was made with {data.get('model')} / {data.get('prompt_version')}; "
-                  f"starting over with {model} / {PROMPT_VERSION}.")
-        data = {"calls": {}}
+        # Never overwrite or mix analyses: the existing file is the AI side of the comparison.
+        raise RuntimeError(
+            f"{out.name} holds {len(data['calls'])} analyses made with {data.get('model')} / "
+            f"{data.get('prompt_version')}, but the current settings are {model} / {PROMPT_VERSION}. "
+            f"Nothing was changed. To analyze with the new settings, move {out.name} aside first.")
     data.update({"model": model, "prompt_version": PROMPT_VERSION})
 
     calls = [(s, p) for s in sources for p in s.files()]
