@@ -169,10 +169,10 @@ class CallAssistant:
         path = self._path(text)
         return json.loads(path.read_text()) if path.exists() else None
 
-    def review(self, text: str, force: bool = False) -> dict:
-        """Cached review if there is one (unless force), otherwise one LLM call."""
+    def review(self, text: str) -> dict:
+        """Cached review if there is one, otherwise one LLM call."""
         path = self._path(text)
-        if not force and path.exists():
+        if path.exists():
             return json.loads(path.read_text())
         turns = split_turns(text)
         raw = self.endpoint.chat([{"role": "system", "content": SYSTEM},

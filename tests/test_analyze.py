@@ -18,7 +18,7 @@ class FakeAssistant(CallAssistant):
         super().__init__(LLMEndpoint(base_url="http://127.0.0.1:9/v1", model="fake", api_key=None), cache_dir)
         self.requests, self.fail_after = 0, fail_after
 
-    def review(self, text, force=False):
+    def review(self, text):
         if self.cached(text) is not None:
             return self.cached(text)
         if self.fail_after is not None and self.requests >= self.fail_after:

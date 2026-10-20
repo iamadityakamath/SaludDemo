@@ -47,7 +47,7 @@ def load_calls(sources: list[CallSource]) -> list[dict]:
         if not s.transcripts_dir.exists():
             continue
         for p in s.files():
-            calls.append({"call_id": f"{s.key}/{p.name}", "source": s.key, "file_id": p.name, "real": s.real})
+            calls.append({"call_id": f"{s.key}/{p.name}", "source": s.key, "file_id": p.name})
     return calls
 
 

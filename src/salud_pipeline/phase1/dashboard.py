@@ -149,7 +149,7 @@ def make_handler(store: LabelStore, rater: str, ai: AIAnalyses):
     page = files("salud_pipeline.phase1").joinpath("static/dashboard.html").read_text()
     config = {"rater": rater, "items": TRANSCRIPT_ITEMS, "definitions": ITEM_DEFINITIONS,
               "sentiments": SENTIMENTS, "outcomes": OUTCOMES,
-              "sources": [{"key": s.key, "label": s.label, "real": s.real} for s in store.sources.values()]}
+              "sources": [{"key": s.key, "label": s.label} for s in store.sources.values()]}
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status: int, body: bytes, ctype: str):
