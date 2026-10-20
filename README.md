@@ -71,6 +71,7 @@ Each teammate runs it on their own laptop (http://127.0.0.1:8765). They all read
 | AI vs human | per item: agreement with 95% CI, Cohen's kappa, missing AI answers |
 | Rater agreement | per rater pair and item |
 | Synthetic check | human vs planted labels and AI vs planted labels |
+| Salud format | every saved tag in Salud's `salud_gphpvqualityreview` columns and option codes (also `salud_quality_review.csv`) |
 | Definitions | checklist items, outcomes, metrics |
 
 **Comparison rules:**
@@ -79,7 +80,15 @@ Each teammate runs it on their own laptop (http://127.0.0.1:8765). They all read
 - **Two raters who split on an item give no consensus,** and that item is left out of the AI comparison for that call.
 - **Call-quality score:** Yes / (Yes + No) over the 7 transcript-visible items, with N/A excluded. It's provisional until Salud sets weights.
 
-**Scope:** Salud's checklist has 9 items. "Correct call statusing" and "Grammar in notes" need the CRM disposition and agent note, so Phase 1 scores the other 7.
+**Differences from Salud's QA form** (the handoff README and `BIG_Schema.json`). A completed Salud review needs a Yes/No score and a comment for each of 9 items. Phase 1 deliberately differs:
+
+| Salud's form | Phase 1 | In the Salud format export |
+|---|---|---|
+| 9 items | 7 items. "Correct call statusing" and "Grammar in notes" are judged from the CRM disposition and agent note, which the real transcripts don't have. | Those 2 scores are NULL. |
+| Yes / No only (N/A excluded on purpose) | Yes / No / N/A, kept for tagging and agreement | N/A is NULL, and the item is listed in `na_items`. |
+| A comment per item | One note per call | Comment columns are NULL. |
+
+Yes = `785570000` and No = `785570001`. NULL means "not scored" (Salud's rule for an incomplete review), so every exported row is marked `review_complete = False`. `salud_QualityReviewId` is the reviewed contact: the synthetic call's `contact_id`, and NULL for real calls, which have no CRM record here.
 
 ### The Phase 1 calls
 

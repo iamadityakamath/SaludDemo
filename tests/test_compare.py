@@ -59,8 +59,26 @@ def test_compare_end_to_end(tmp_path):
 
     xlsx = compare.write(res, tmp_path / "out")
     assert openpyxl.load_workbook(xlsx).sheetnames == ["Summary", "Calls", "Coaching", "AI vs human",
-                                                       "Rater agreement", "Synthetic check", "Definitions"]
+                                                       "Rater agreement", "Synthetic check", "Salud format",
+                                                       "Definitions"]
     assert "AI vs human" in (tmp_path / "out" / "summary.md").read_text()
+
+
+def test_salud_format_uses_salud_codes_and_never_writes_na():
+    all_yes = {k: "Yes" for k in TRANSCRIPT_ITEMS}
+    labels = pd.DataFrame([tag("real/r1.txt", "AK", {**all_yes, "compliance": "No", "correct_info": "N/A"}),
+                           tag("synthetic/s1.txt", "RM", all_yes)])
+    out = compare.salud_format(labels).set_index("call_id")
+    r1, s1 = out.loc["real/r1.txt"], out.loc["synthetic/s1.txt"]
+    assert r1["salud_AppropriateGreetings"] == 785570000 and r1["salud_Compliance"] == 785570001
+    assert pd.isna(r1["salud_CorrectInformation"]) and r1["na_items"] == "correct_info"   # N/A -> NULL
+    assert pd.isna(r1["salud_CorrectCallStatusing"]) and pd.isna(r1["salud_Grammar"])   # not scored in Phase 1
+    assert pd.isna(r1["salud_QualityReviewId"]) and s1["salud_QualityReviewId"] == "s1"  # synthetic contact only
+    assert not out["review_complete"].any()
+    scores = out[[c for c in out if c.startswith("salud_") and not c.endswith(("Id", "Comment", "Comments", "date",
+                                                                                "lessonslearned"))]]
+    assert set(scores.stack().dropna().unique()) <= {785570000, 785570001}
+    assert compare.salud_format(labels).equals(compare.salud_format(labels))            # stable review IDs
 
 
 def test_compare_with_nothing_yet(tmp_path):

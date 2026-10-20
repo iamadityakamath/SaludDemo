@@ -8,21 +8,30 @@ Inputs (from the team's Neon database, see store.py):
   - planted labels of the synthetic calls
 
 Outputs (reports/phase1/comparison/):
-  - phase1_results.xlsx  Summary, Calls, Coaching, AI vs human, Rater agreement, Synthetic check, Definitions
+  - phase1_results.xlsx  Summary, Calls, Coaching, AI vs human, Rater agreement, Synthetic check, Salud format,
+                         Definitions
   - calls.csv, coaching.csv, ai_vs_human.csv, rater_agreement.csv  (same tables, database-friendly)
+  - salud_quality_review.csv  every saved tag in the columns and option codes of salud_gphpvqualityreview
   - summary.md
 
 Call-quality score (provisional until Salud sets weights): share of applicable checklist items the agent
 passed = Yes / (Yes + No) over the 7 transcript-visible items; N/A items are left out.
+
+Salud format: Salud's form allows only Yes (785570000) / No (785570001), with NULL while a review is incomplete.
+Phase 1 keeps N/A internally, so N/A is written as NULL there. Call statusing and grammar (judged from the CRM
+disposition and agent note, not the transcript) and the per-item comments are not scored in Phase 1, so they are
+NULL too: every exported review is incomplete by Salud's rule.
 """
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from ..phase2 import schema as S
 from .checklist import ITEM_DEFINITIONS, OUTCOME_DEFINITIONS, OUTCOME_GROUPS, TARGETS, TRANSCRIPT_ITEMS
 from .metrics import agreement_table, consensus, inter_rater
 
@@ -61,6 +70,40 @@ def ai_flat(call_id: str, a: dict) -> dict:
     row["ai_model"] = a.get("model")
     row["ai_analyzed_at"] = a.get("analyzed_at")
     return row
+
+
+SALUD_CODES = {"Yes": 785570000, "No": 785570001}   # N/A and blank -> NULL (incomplete)
+_REVIEW_NS = uuid.UUID("6f1c2b0e-3d4a-4c5b-9e8f-0a1b2c3d4e5f")
+
+
+def salud_format(labels: pd.DataFrame) -> pd.DataFrame:
+    """Every saved tag as one salud_gphpvqualityreview row (one review per rater per call)."""
+    cols = ["call_id", "rater", "salud_gphpvqualityreviewId", "salud_QualityReviewId", "salud_reviewdate"]
+    for _, score, comment, _ in S.QA_ITEMS:
+        cols += [score, comment]
+    cols += ["salud_lessonslearned", "na_items", "review_complete"]
+    rows = []
+    for r in labels.to_dict("records"):
+        source, file_id = r["call_id"].split("/", 1)
+        row = {"call_id": r["call_id"], "rater": r["rater"],
+               # Stable per call and rater, so re-exports give the same ID.
+               "salud_gphpvqualityreviewId": str(uuid.uuid5(_REVIEW_NS, f"{r['call_id']}|{r['rater']}")),
+               # The reviewed contact. Only synthetic calls have one; real calls have no CRM record here.
+               "salud_QualityReviewId": Path(file_id).stem if source == "synthetic" else None,
+               "salud_reviewdate": r.get("saved_at")}
+        for key, score, comment, _ in S.QA_ITEMS:
+            row[score] = SALUD_CODES.get(r.get(key)) if key in TRANSCRIPT_ITEMS else None
+            row[comment] = None
+        row["salud_lessonslearned"] = None
+        row["na_items"] = ";".join(k for k in TRANSCRIPT_ITEMS if r.get(k) == "N/A")
+        row["review_complete"] = False
+        rows.append(row)
+    out = pd.DataFrame(rows, columns=cols)
+    for _, score, _, _ in S.QA_ITEMS:
+        out[score] = out[score].astype("Int64")
+    if "salud_reviewdate" in out and len(out):
+        out["salud_reviewdate"] = pd.to_datetime(out["salud_reviewdate"], utc=True).dt.tz_localize(None)
+    return out
 
 
 def _ai_answers(ai: pd.DataFrame) -> pd.DataFrame:
@@ -164,7 +207,7 @@ def build(calls: list[dict], labels: pd.DataFrame, analyses: dict[str, dict],
     }
     return {"counts": pd.DataFrame([counts]), "overview": overview, "calls": out,
             "coaching": pd.DataFrame(coaching), "agreement": agreement, "rater_agreement": irr,
-            "synthetic_check": sanity}
+            "synthetic_check": sanity, "salud_format": salud_format(labels)}
 
 
 def _definitions() -> pd.DataFrame:
@@ -179,17 +222,26 @@ def _definitions() -> pd.DataFrame:
                                         "would give. 0 = chance, 1 = perfect; above 0.6 is usually considered good."},
         {"term": "Needs review", "definition": "The AI gave no answer, or gave one without a transcript quote "
                                                "that could be verified."},
-        {"term": "Tagged with AI off", "definition": "Tags saved without pressing Analyze first. These are the fairest "
-                                                     "benchmark, because pre-filled tags tend to follow the AI."},
+        {"term": "Tagged with AI off", "definition": "Tags saved without the AI's pre-filled answers. These are the "
+                                                     "fairest benchmark, because pre-filled tags tend to follow the AI."},
+        {"term": "Salud format", "definition": "Each saved tag in Salud's salud_gphpvqualityreview columns: Yes = "
+                                               "785570000, No = 785570001, NULL = not scored. Salud's form has no N/A, so "
+                                               "Phase 1's N/A answers are NULL (listed in na_items). Call statusing, "
+                                               "grammar and the per-item comments are not scored in Phase 1, so every "
+                                               "row is an incomplete review. salud_QualityReviewId is the synthetic "
+                                               "contact; real calls have none."},
     ]
     return pd.DataFrame(rows)
 
 
 def write(results: dict[str, pd.DataFrame], out_dir: Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("calls", "coaching", "agreement", "rater_agreement", "synthetic_check"):
+    files = {"calls": "calls", "coaching": "coaching", "agreement": "ai_vs_human",
+             "rater_agreement": "rater_agreement", "synthetic_check": "synthetic_check",
+             "salud_format": "salud_quality_review"}
+    for name, file in files.items():
         if len(results[name]):
-            results[name].to_csv(out_dir / f"{'ai_vs_human' if name == 'agreement' else name}.csv", index=False)
+            results[name].to_csv(out_dir / f"{file}.csv", index=False)
     xlsx = out_dir / "phase1_results.xlsx"
     with pd.ExcelWriter(xlsx, engine="openpyxl") as xw:
         summary = results["counts"].T.reset_index()
@@ -198,7 +250,8 @@ def write(results: dict[str, pd.DataFrame], out_dir: Path) -> Path:
         if len(results["overview"]):
             results["overview"].round(3).to_excel(xw, sheet_name="Summary", index=False, startrow=len(summary) + 2)
         sheets = [("Calls", "calls"), ("Coaching", "coaching"), ("AI vs human", "agreement"),
-                  ("Rater agreement", "rater_agreement"), ("Synthetic check", "synthetic_check")]
+                  ("Rater agreement", "rater_agreement"), ("Synthetic check", "synthetic_check"),
+                  ("Salud format", "salud_format")]
         for sheet, key in sheets:
             df = results[key]
             (df.round(3) if len(df) else pd.DataFrame({"note": ["No data yet"]})).to_excel(xw, sheet_name=sheet, index=False)
