@@ -1,10 +1,10 @@
 """Phase 1 route 1: the dashboard for reviewing and tagging calls, backed by the team's Neon database.
 
-    salud-phase1 dashboard --rater AK
+    salud-phase1 dashboard --rater avni
 
 Runs on each teammate's laptop (127.0.0.1 only) and talks to the shared Neon database (store.py):
 calls and transcripts, the AI analyses that `salud-phase1 analyze` added, and every rater's tags.
-Each call opens pre-filled with its AI answers, quotes, sentiment, outcome and coaching tips; the rater
+The list opens on the calls assigned to this rater (salud-phase1 assign). Each call opens pre-filled with its AI answers, quotes, sentiment, outcome and coaching tips; the rater
 checks, corrects and saves. Saving writes that rater's row in phase1.reviewed_tags, recording the model
 whose answers pre-filled it (llm_model) and the items the rater changed (overrides).
 
@@ -54,15 +54,17 @@ def make_handler(store: Store, rater: str):
 
     def state() -> dict:
         calls = store.calls()
+        assigned = store.assignments()
         tags = store.tags(rater)
         labels = {r["call_id"]: {k: (r[k] or "") for k in TARGETS + ["notes"]} for r in tags.to_dict("records")}
         sources = list(dict.fromkeys(c["source"] for c in calls))
         ai = store.ai_info() | {"file": "the team database"}
-        return {"config": {"rater": rater, "items": TRANSCRIPT_ITEMS, "definitions": ITEM_DEFINITIONS,
+        return {"config": {"rater": rater, "raters": sorted({r for rs in assigned.values() for r in rs}), "items": TRANSCRIPT_ITEMS, "definitions": ITEM_DEFINITIONS,
                            "sentiments": SENTIMENTS, "outcomes": OUTCOMES, "ai": ai,
                            "sources": [{"key": s, "label": SOURCE_LABELS.get(s, s)} for s in sources],
                            "has_logo": _logo_path() is not None},
-                "calls": [{"id": c["call_id"], "file_id": c["file_id"], "source": c["source"]} for c in calls],
+                "calls": [{"id": c["call_id"], "file_id": c["file_id"], "source": c["source"],
+                           "assignees": assigned.get(c["call_id"], [])} for c in calls],
                 "labels": labels}
 
     class Handler(BaseHTTPRequestHandler):

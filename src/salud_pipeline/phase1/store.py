@@ -1,4 +1,5 @@
-"""The team's shared Phase 1 data in Neon: calls with transcripts, AI analyses and every rater's tags.
+"""The team's shared Phase 1 data in Neon: calls with transcripts, AI analyses, who tags which call, and every
+rater's tags.
 
 The dashboard, `analyze` and `compare` all go through this class, so every teammate works on the same
 data from their own laptop. Connection: DATABASE_URL (pooled) from .env.
@@ -110,6 +111,23 @@ class Store:
         df = pd.DataFrame(rows, columns=TAG_COLUMNS)
         df["llm_model"] = df["llm_model"].fillna("")
         return df
+
+    # ---- assignments ----
+    def assignments(self) -> dict[str, list[str]]:
+        """call_id -> raters assigned to it."""
+        out: dict[str, list[str]] = {}
+        for r in self._all("SELECT call_id, rater FROM phase1.assignments ORDER BY call_id, rater"):
+            out.setdefault(r["call_id"], []).append(r["rater"])
+        return out
+
+    def assign(self, pairs: list[tuple[str, str]]) -> int:
+        """Add (call_id, rater) assignments; ones that already exist are left alone. Returns how many were added."""
+        n = 0
+        with self.pool.connection() as c:
+            for call_id, rater in pairs:
+                n += c.execute("INSERT INTO phase1.assignments (call_id, rater) VALUES (%s, %s) "
+                               "ON CONFLICT DO NOTHING RETURNING 1", (call_id, rater)).fetchone() is not None
+        return n
 
     def save_tag(self, rater: str, call_id: str, values: dict, llm: dict | None = None) -> None:
         if not rater.strip():

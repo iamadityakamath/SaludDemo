@@ -1,7 +1,8 @@
 """Phase 1: call analysis on the team's shared Neon database. Two routes.
 
 Route 1, dashboard (review the AI's answers and tag):
-    salud-phase1 dashboard --rater AK
+    salud-phase1 assign --raters avni,sharayu,aditya,ibrahim,ananya,rudrakshi   # team lead, once
+    salud-phase1 dashboard --rater avni
 
 Route 2, script (AI analysis of every call, then the comparison):
     salud-phase1 analyze      # LLM on calls without an analysis -> Neon (phase1.ai_analyses)
@@ -17,6 +18,7 @@ import sys
 
 from ..llm_client import LLMEndpoint
 from ..paths import COMPARISON, LLM_CACHE
+from .assign import rater_name
 from .store import Store, as_label_frame
 
 
@@ -29,8 +31,15 @@ def cmd_dashboard(args) -> None:
     calls, ai = store.calls(), store.ai_info()
     if not calls:
         sys.exit("The team database has no calls yet. The team lead runs `salud-db setup` once to load them.")
+    rater = rater_name(args.rater)
+    assigned = store.assignments()
+    mine = sum(rater in rs for rs in assigned.values())
+    if assigned and not mine:
+        names = sorted({r for rs in assigned.values() for r in rs})
+        print(f"Note: no calls are assigned to '{rater}'. Assigned raters: {', '.join(names)}. "
+              "Check the spelling, or pick 'All raters' on the page.")
     try:
-        httpd = serve(args.rater.strip(), args.port, store=store)
+        httpd = serve(rater, args.port, store=store)
     except OSError as e:
         if e.errno != 48 and "in use" not in str(e):
             raise
@@ -39,7 +48,7 @@ def cmd_dashboard(args) -> None:
                  f"or pick another port with --port {args.port + 1}.")
     url = f"http://127.0.0.1:{httpd.server_port}/"
     by_source = {s: sum(c["source"] == s for c in calls) for s in ("real", "synthetic")}
-    print(f"Rater {args.rater}. Team database: {by_source['real']} real + {by_source['synthetic']} synthetic calls, "
+    print(f"Rater {rater} ({mine} calls assigned). Team database: {by_source['real']} real + {by_source['synthetic']} synthetic calls, "
           f"{ai['analyzed']} with AI answers ({ai['model'] or 'none yet'}).")
     print(f"Open {url}  (Ctrl+C to stop)")
     if not args.no_browser:
@@ -48,6 +57,29 @@ def cmd_dashboard(args) -> None:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
+
+
+def cmd_assign(args) -> None:
+    from .assign import plan
+
+    store = Store()
+    calls = store.calls()
+    if args.raters:
+        pairs = plan(calls, args.raters.split(","), store.assignments(), real_per_call=args.real_per_call)
+        print(f"Added {store.assign(pairs)} assignments.")
+    assigned = store.assignments()
+    if not assigned:
+        sys.exit("No calls are assigned yet. Run: salud-phase1 assign --raters name1,name2,...")
+    source = {c["call_id"]: c["source"] for c in calls}
+    tagged = {(r["call_id"], r["rater"]) for r in store.tags().to_dict("records")}
+    print(f"\n{'rater':12s} {'real':>5s} {'synth':>6s} {'total':>6s} {'tagged':>7s}")
+    for r in sorted({r for rs in assigned.values() for r in rs}):
+        mine = [cid for cid, rs in assigned.items() if r in rs]
+        real = sum(source.get(cid) == "real" for cid in mine)
+        done = sum((cid, r) in tagged for cid in mine)
+        print(f"{r:12s} {real:5d} {len(mine) - real:6d} {len(mine):6d} {done:7d}")
+    short = [c["call_id"] for c in calls if c["call_id"] not in assigned]
+    print(f"\n{len(assigned)} of {len(calls)} calls assigned" + (f"; unassigned: {len(short)}" if short else "."))
 
 
 def cmd_analyze(args) -> None:
@@ -91,9 +123,13 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     d = sub.add_parser("dashboard", help="route 1: review the AI's answers and tag calls")
-    d.add_argument("--rater", required=True, help="your initials; each rater's tags are kept separately")
+    d.add_argument("--rater", required=True, help="your first name, as used in `assign` (e.g. avni)")
     d.add_argument("--port", type=int, default=8765)
     d.add_argument("--no-browser", action="store_true")
+
+    s = sub.add_parser("assign", help="split the calls across raters (no options: show who has what)")
+    s.add_argument("--raters", help="comma-separated first names, e.g. avni,sharayu,aditya")
+    s.add_argument("--real-per-call", type=int, default=2, help="raters per real call (default 2)")
 
     a = sub.add_parser("analyze", help="route 2, step 1: LLM analysis of every call -> team database")
     a.add_argument("--limit", type=int, help="maximum new LLM requests this run")
@@ -102,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
     try:
-        {"dashboard": cmd_dashboard, "analyze": cmd_analyze, "compare": cmd_compare}[args.cmd](args)
+        {"dashboard": cmd_dashboard, "assign": cmd_assign, "analyze": cmd_analyze, "compare": cmd_compare}[args.cmd](args)
     except RuntimeError as e:
         sys.exit(f"Error: {e}")
     return 0

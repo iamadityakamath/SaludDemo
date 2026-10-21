@@ -70,6 +70,8 @@ nav { background: var(--panel); border-right: 1px solid var(--line); display: gr
 .src.synthetic { background: var(--na-soft); color: var(--muted); }
 .list-foot { padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
 .list-empty { padding: 16px 12px; color: var(--muted); font-size: 13px; }
+.who-as { font-size: 10px; color: var(--faint); white-space: nowrap; flex: none; margin-left: auto; }
+.who-as + .dot { margin-left: 0; }
 .dot { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--faint); flex: none; margin-left: auto; }
 .dot.partial { background: var(--warn); border-color: var(--warn); }
 .dot.done { background: var(--yes); border-color: var(--yes); }
@@ -223,6 +225,7 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; border: 1px solid v
     <nav aria-label="Calls">
       <div class="filters">
         <span class="lbl">Calls</span>
+        <select id="f-who" aria-label="Filter by assigned rater"></select>
         <div class="ftabs" id="f-source" role="group" aria-label="Filter by source"></div>
         <select id="f-status" aria-label="Filter by status">
           <option value="all">All statuses</option>
@@ -278,7 +281,7 @@ const $ = (id) => document.getElementById(id);
 const S = {
   config: null, calls: [], byId: {}, labels: {}, sugg: {}, text: {},
   cur: null, view: [], form: {}, touched: new Set(), dirty: false, active: null, activeSticky: false,
-  filter: { source: "all", status: "all", q: "" },
+  filter: { who: "mine", source: "all", status: "all", q: "" },
 };
 const LABEL = {
   greeting: "Appropriate greeting", culture: "Culture & values", capturing_data: "Captures key data",
@@ -287,6 +290,7 @@ const LABEL = {
 };
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const cap = (s) => s ? s[0].toUpperCase() + s.slice(1) : s;
 const call = () => S.byId[S.cur];
 const sugg = () => S.sugg[S.cur];
 const turns = () => (S.text[S.cur] || { turns: [] }).turns;
@@ -299,7 +303,7 @@ async function load() {
   Object.assign(S, { config: d.config, calls: d.calls, labels: d.labels });
   S.calls.forEach((c) => (S.byId[c.id] = c));
   if (d.config.has_logo) $("logo-slot").innerHTML = `<img src="/brand/logo" alt="Salud Revenue Partners">`;
-  $("rater").textContent = "Rater · " + d.config.rater;
+  $("rater").textContent = "Rater · " + cap(d.config.rater);
   loadFilter();
   buildFilters(); buildForm(); applyFilter();
   const first = S.view.find((id) => status(id) !== "done") || S.view[0] || S.calls[0]?.id;
@@ -308,6 +312,13 @@ async function load() {
 
 /* ---------- filters & list ---------- */
 function buildFilters() {
+  const me = S.config.rater, count = (r) => S.calls.filter((c) => c.assignees.includes(r)).length;
+  const who = [{ k: "mine", t: `My calls (${count(me)})` }, { k: "all", t: `All raters (${S.calls.length})` },
+    ...S.config.raters.filter((r) => r !== me).map((r) => ({ k: r, t: `${cap(r)} (${count(r)})` }))];
+  if (!who.some((o) => o.k === S.filter.who) || (S.filter.who === "mine" && !count(me))) S.filter.who = count(me) ? "mine" : "all";
+  $("f-who").innerHTML = who.map((o) => `<option value="${esc(o.k)}">${esc(o.t)}</option>`).join("");
+  $("f-who").value = S.filter.who;
+  $("f-who").onchange = () => { S.filter.who = $("f-who").value; applyFilter(true); };
   const tabs = [{ key: "all", label: "All" }, ...S.config.sources.map((s) => ({ key: s.key, label: s.label }))];
   if (!tabs.some((t) => t.key === S.filter.source)) S.filter.source = "all";
   $("f-source").innerHTML = tabs.map((t) => {
@@ -331,7 +342,9 @@ function status(id) {
 function applyFilter(userChange) {
   const f = S.filter;
   $("f-source").querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.k === f.source));
+  const who = f.who === "mine" ? S.config.rater : f.who;
   S.view = S.calls.filter((c) =>
+    (who === "all" || c.assignees.includes(who)) &&
     (f.source === "all" || c.source === f.source) &&
     (f.status === "all" || status(c.id) === f.status) &&
     (!f.q || c.file_id.toLowerCase().includes(f.q))).map((c) => c.id);
@@ -350,6 +363,7 @@ function renderList() {
       return `<button type="button" data-id="${esc(id)}" aria-current="${id === S.cur}">
         <span class="src ${c.source}">${esc(srcLabel[c.source] || c.source)}</span>
         <span class="fid" title="${esc(c.file_id)}">${esc(c.file_id.replace(/\.txt$/, "").slice(0, 8))}</span>
+        ${S.filter.who === "mine" || !c.assignees.length ? "" : `<span class="who-as" title="Assigned to ${esc(c.assignees.map(cap).join(", "))}">${esc(c.assignees.map((r) => cap(r.slice(0, 2))).join(" · "))}</span>`}
         <span class="dot ${status(id) === "todo" ? "" : status(id)}"></span></button>`;
     }).join("");
     list.querySelectorAll("button").forEach((b) => b.onclick = () => guard(() => show(b.dataset.id)));

@@ -35,7 +35,8 @@ from .phase2 import schema as S
 MIGRATIONS = REPO_ROOT / "db" / "migrations"
 # Parents before children, so foreign keys hold during the load.
 CRM_TABLES = [S.GUARANTOR, S.ACCOUNTS, S.CONTACTS, S.BRIDGE, S.RECEIPTS, S.QA_REVIEW]
-PHASE1_TABLES = ["calls", "ai_analyses", "ai_checklist", "ai_coaching", "reviewed_tags", "legacy_manual_tags"]
+PHASE1_TABLES = ["calls", "ai_analyses", "ai_checklist", "ai_coaching", "reviewed_tags", "legacy_manual_tags",
+                 "assignments"]
 
 
 def connect() -> psycopg.Connection:

@@ -46,6 +46,14 @@ def test_state_lists_real_and_synthetic_calls_from_the_database(store, url):
     assert b"Call QA Review" in urllib.request.urlopen(url + "/").read()
 
 
+def test_state_lists_each_calls_assigned_raters(store, url):
+    cid = _some_call(store, "real")
+    assert store.assign([(cid, store.test_rater), (cid, store.test_rater)]) == 1   # duplicates ignored
+    st = _get(url + "/api/state")
+    call = next(c for c in st["calls"] if c["id"] == cid)
+    assert store.test_rater in call["assignees"] and store.test_rater in st["config"]["raters"]
+
+
 def test_save_tag_writes_the_raters_row_with_provenance(store, url):
     cid = _some_call(store, "synthetic")
     before = store.ai_analysis(cid)

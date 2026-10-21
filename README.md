@@ -19,7 +19,7 @@ Everything lives in the team's **shared Neon Postgres database** (project `salud
 git clone https://github.com/iamadityakamath/SaludDemo && cd SaludDemo
 uv venv && uv pip install -e '.[dev]'
 cp .env.example .env     # paste DATABASE_URL (from the team lead); GROQ_API_KEY only if you run `analyze`
-.venv/bin/salud-phase1 dashboard --rater <your initials>
+.venv/bin/salud-phase1 dashboard --rater <your first name>   # e.g. avni
 ```
 
 - **Connection string.** It's shared privately by the team lead. Never commit it; this repository is public.
@@ -33,10 +33,14 @@ cp .env.example .env     # paste DATABASE_URL (from the team lead); GROQ_API_KEY
 ### Route 1: dashboard (review the AI's answers and tag)
 
 ```bash
-.venv/bin/salud-phase1 dashboard --rater AK
+.venv/bin/salud-phase1 assign --raters avni,sharayu,aditya,ibrahim,ananya,rudrakshi   # team lead, once
+.venv/bin/salud-phase1 dashboard --rater avni
 ```
 
 Each teammate runs it on their own laptop (http://127.0.0.1:8765). They all read and write the same database.
+
+- **Who tags what:** `assign` splits the calls evenly. Each real call gets **2 raters**, so rater agreement can be measured on Salud's own calls, and each synthetic call gets 1. That's 70 tags, 11–12 per person. Running it again only fills calls that are short of raters and never moves existing assignments. `salud-phase1 assign` with no options shows who has what and how many each person has tagged.
+- **The list opens on "My calls".** The menu at the top of the list switches to "All raters" or to another rater's calls; badges like `Av · Sh` show who's assigned. Use the same first name you were assigned under (case doesn't matter).
 
 - **Every call opens pre-filled** with its AI analysis:
   - checklist answers, with reasons and highlighted transcript quotes
