@@ -1,0 +1,9 @@
+# Upload only what the website needs. Never .env, data/, docs/, reports/ (client and secret files).
+/*
+!/api
+!/src
+!/branding
+!/pyproject.toml
+!/vercel.json
+!/requirements.txt
+**/__pycache__

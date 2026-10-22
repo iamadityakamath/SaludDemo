@@ -1,0 +1,5 @@
+# Runtime packages for the team website on Vercel (api/index.py). Laptops install from pyproject.toml.
+numpy>=1.26
+pandas>=2.1
+psycopg[binary]>=3.2
+psycopg-pool>=3.2

@@ -18,4 +18,8 @@ _passcode = os.environ.get("TEAM_PASSCODE", "")
 if len(_passcode) < 12:
     raise RuntimeError("Set TEAM_PASSCODE (at least 12 characters) in the Vercel project settings")
 
-handler = make_handler(Store(max_size=2), passcode=_passcode)
+_Dashboard = make_handler(Store(max_size=2), passcode=_passcode)
+
+
+class handler(_Dashboard):  # noqa: N801  Vercel looks for a top-level class named `handler`
+    pass

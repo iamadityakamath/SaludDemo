@@ -4,6 +4,10 @@ This repo is UIUC BIG Team B's Salud project. A teammate has just cloned it and 
 Phase 1 dashboard**. Your job: get the dashboard running and open it for them. Follow these steps in order
 and keep your messages short; the user is a teammate, not necessarily a developer.
 
+**First, check whether they need local setup at all:** the dashboard is also a website,
+https://agent-call-analysis.vercel.app (team passcode, then their name). If they only want to tag calls,
+point them there and stop. Continue below only if they want it running locally.
+
 ## 1. Ask the user for two things (before running anything)
 
 1. **Their first name**, lower case. It must be one of: `avni`, `sharayu`, `aditya`, `ibrahim`, `ananya`,

@@ -13,6 +13,14 @@ Phase 1's AI analyses (`phase1.ai_analyses`, joined to `big_synthetic` accounts)
 
 ## Team setup
 
+**Just tagging?** Use the team website, **https://agent-call-analysis.vercel.app**: sign in with the team passcode (shared privately by the team lead) and pick your name. There's nothing to install. The setup below is for running things locally.
+
+**The website on Vercel** (project `agent-call-analysis`) runs the same dashboard from [`api/index.py`](api/index.py). Every push to `main` redeploys it.
+- **Sign-in:** data only loads after the team passcode and a name from the assignments. The session is an HttpOnly cookie, signed with a key derived from the passcode and valid for 30 days.
+- **Settings:** `DATABASE_URL` and `TEAM_PASSCODE` are stored as Vercel environment variables, never in the repo.
+- **Changing the passcode** in the Vercel settings (then redeploying) signs everyone out.
+- **What gets uploaded:** [`.vercelignore`](.vercelignore) uploads only `api/`, `src/`, `branding/` and config, so no client data or secrets are ever uploaded.
+
 Everything lives in the team's **shared Neon Postgres database** (project `salud-pipeline`, database `salud`): calls and transcripts, AI analyses and every rater's tags, plus the synthetic world for Phase 2. Teammates don't need any local data files.
 
 ```bash
