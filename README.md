@@ -22,6 +22,7 @@ cp .env.example .env     # paste DATABASE_URL (from the team lead); GROQ_API_KEY
 .venv/bin/salud-phase1 dashboard --rater <your first name>   # e.g. avni
 ```
 
+- **Using Claude Code, ChatGPT/Codex or Cursor?** Open the cloned folder and ask it to *"set up and open the tagging dashboard"*. [`AGENTS.md`](AGENTS.md) (also loaded by `CLAUDE.md`) walks the assistant through the setup and tells it what not to touch.
 - **Connection string.** It's shared privately by the team lead. Never commit it; this repository is public.
 - **Real call data.** The database holds Salud's 10 redacted real calls. This Neon project isn't HIPAA-enabled, so keep access to the team, and confirm with Salud before sharing it further.
 - **Team lead only:** `salud-db setup` applies schema changes and imports local files. It's safe to rerun; it only adds what's missing.
