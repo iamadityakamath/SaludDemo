@@ -96,3 +96,66 @@ def test_no_llm_route_and_loopback_only(url):
         urllib.request.urlopen(urllib.request.Request(url + "/api/analyze", data=b"{}"))
     assert e.value.code == 404
     assert url.startswith("http://127.0.0.1:")
+
+
+# ---- the website (Vercel): team passcode, then a rater name ----
+PASS = "test-passcode-1234"
+
+
+@pytest.fixture()
+def site(store):
+    from salud_pipeline.phase1.dashboard import make_handler
+    from http.server import ThreadingHTTPServer
+
+    some = _some_call(store, "synthetic")
+    store.assign([(some, store.test_rater)])
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(store, passcode=PASS))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_port}"
+    httpd.shutdown()
+
+
+def _req(url, path, payload=None, cookie=None):
+    req = urllib.request.Request(url + path, data=None if payload is None else json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json", **({"Cookie": cookie} if cookie else {})})
+    try:
+        r = urllib.request.urlopen(req)
+        return r.status, json.loads(r.read()), r.headers.get("Set-Cookie")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read()), e.headers.get("Set-Cookie")
+
+
+def test_website_needs_passcode_and_name_before_any_data(store, site):
+    assert _req(site, "/api/state")[0] == 401
+    assert _req(site, "/api/call?id=" + _some_call(store, "real"))[0] == 401
+    assert _req(site, "/api/label", {"id": "x", "values": {}})[0] == 401
+    assert b"Agent Call Analysis" in urllib.request.urlopen(site + "/").read()   # the page itself has no data
+    assert _req(site, "/api/login", {"passcode": "wrong"})[0] == 401
+    status, body, _ = _req(site, "/api/login", {"passcode": PASS})
+    assert status == 200 and store.test_rater in body["raters"]
+    assert _req(site, "/api/login", {"passcode": PASS, "rater": "not-on-the-team"})[0] == 400
+
+
+def test_website_session_identifies_the_rater(store, site):
+    status, _, set_cookie = _req(site, "/api/login", {"passcode": PASS, "rater": store.test_rater.upper()})
+    assert status == 200 and "HttpOnly" in set_cookie and "Secure" in set_cookie and "SameSite=Strict" in set_cookie
+    cookie = set_cookie.split(";")[0]
+    status, st, _ = _req(site, "/api/state", cookie=cookie)
+    assert status == 200 and st["config"]["rater"] == store.test_rater and st["config"]["website"]
+    cid = _some_call(store, "synthetic")
+    assert _req(site, "/api/label", {"id": cid, "values": GOOD}, cookie=cookie)[0] == 200
+    assert len(store.tags(store.test_rater)) == 1                         # saved under the signed-in rater
+    name, value = cookie.split("=", 1)
+    forged = f"{name}=avni|{value.split('|')[1]}|{value.split('|')[2]}"
+    assert _req(site, "/api/state", cookie=forged)[0] == 401             # can't change the name in the cookie
+    assert "Max-Age=0" in _req(site, "/api/logout", {})[2]
+
+
+def test_session_signature_depends_on_passcode():
+    from salud_pipeline.phase1.dashboard import make_session, read_session
+
+    v = make_session("passcode-one-12", "avni")
+    assert read_session("passcode-one-12", v) == "avni"
+    assert read_session("passcode-two-12", v) is None                  # new passcode signs everyone out
+    assert read_session("passcode-one-12", make_session("passcode-one-12", "avni", now=0)) is None   # expired
+    assert read_session("passcode-one-12", "garbage") is None

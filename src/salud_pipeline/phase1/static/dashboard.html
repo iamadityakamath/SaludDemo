@@ -171,6 +171,21 @@ textarea { min-height: 64px; resize: vertical; }
 .status.dirty { color: var(--warn); } .status.err { color: var(--no); }
 kbd { font-family: ui-monospace, monospace; font-size: 11px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
 
+/* Website sign-in (team passcode, then your name) */
+.login { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 16px;
+  background: linear-gradient(180deg, var(--accent-soft), var(--bg)); }
+.login[hidden] { display: none; }
+.login form { width: min(380px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--shadow), inset 0 3px 0 var(--brand); padding: 22px; display: grid; gap: 12px; }
+.login h2 { margin: 0; font-size: 17px; }
+.login p { margin: 0; color: var(--muted); font-size: 13px; }
+.login input[type=password] { width: 100%; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 8px; padding: 9px 10px; font: inherit; }
+.login .err { color: var(--no); font-size: 13px; min-height: 1.2em; }
+.login img { height: 40px; justify-self: start; }
+#signout { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
+#signout[hidden] { display: none; }
+
 /* Responsive: browser zoom shrinks the CSS viewport, so these also cover 125-250% zoom. */
 @media (max-width: 1280px) { .keys { display: none; } }
 @media (max-width: 1100px) {
@@ -209,6 +224,17 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; border: 1px solid v
 </style>
 </head>
 <body>
+<div class="login" id="login" hidden>
+  <form id="login-form" autocomplete="off">
+    <img src="/brand/logo" alt="" onerror="this.remove()">
+    <h2>Agent Call Analysis</h2>
+    <p id="login-help">Enter the team passcode.</p>
+    <input type="password" id="login-pass" placeholder="Team passcode" aria-label="Team passcode" autocomplete="current-password">
+    <select id="login-name" aria-label="Your name" hidden></select>
+    <div class="err" id="login-err" role="alert"></div>
+    <button class="btn primary" type="submit" id="login-go">Continue</button>
+  </form>
+</div>
 <div class="app">
   <header>
     <div class="brand">
@@ -219,6 +245,7 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; border: 1px solid v
     <span class="spacer"></span>
     <span class="chip" id="aichip"><span class="pulse"></span><span id="aitext">AI</span></span>
     <span class="chip" id="rater"></span>
+    <button type="button" id="signout" hidden>Sign out</button>
     <span class="status keys"><kbd>⌘S</kbd> save · <kbd>Alt</kbd><kbd>↑↓</kbd> calls</span>
   </header>
   <div class="body">
@@ -298,8 +325,42 @@ const turns = () => (S.text[S.cur] || { turns: [] }).turns;
 function saveFilter() { try { localStorage.setItem("qa-filter", JSON.stringify(S.filter)); } catch (e) {} }
 function loadFilter() { try { Object.assign(S.filter, JSON.parse(localStorage.getItem("qa-filter") || "{}")); } catch (e) {} }
 
+/* ---------- website sign-in ---------- */
+async function login(rater) {
+  const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ passcode: $("login-pass").value, rater: rater || "" }) });
+  return { ok: r.ok, ...(await r.json().catch(() => ({}))) };
+}
+function showLogin() {
+  $("login").hidden = false;
+  $("login-pass").focus();
+  $("login-form").onsubmit = async (e) => {
+    e.preventDefault();
+    $("login-go").disabled = true; $("login-err").textContent = "";
+    const pick = $("login-name").hidden ? "" : $("login-name").value;
+    const res = await login(pick);
+    $("login-go").disabled = false;
+    if (!res.ok) { $("login-err").textContent = res.error || "Could not sign in"; return; }
+    if (res.raters) {
+      $("login-name").innerHTML = `<option value="">Choose your name…</option>` +
+        res.raters.map((r) => `<option value="${esc(r)}">${esc(cap(r))}</option>`).join("");
+      $("login-name").hidden = false; $("login-pass").hidden = true;
+      $("login-help").textContent = "Who's tagging?"; $("login-name").focus();
+      return;
+    }
+    location.reload();
+  };
+}
+$("signout").onclick = () => guard(async () => {
+  await fetch("/api/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  S.dirty = false; location.reload();
+});
+
 async function load() {
-  const d = await (await fetch("/api/state")).json();
+  const resp = await fetch("/api/state");
+  if (resp.status === 401) return showLogin();
+  const d = await resp.json();
+  $("signout").hidden = !d.config.website;
   Object.assign(S, { config: d.config, calls: d.calls, labels: d.labels });
   S.calls.forEach((c) => (S.byId[c.id] = c));
   if (d.config.has_logo) $("logo-slot").innerHTML = `<img src="/brand/logo" alt="Salud Revenue Partners">`;
@@ -642,7 +703,7 @@ async function save(advance) {
   const r = await fetch("/api/label", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ id, values: S.form, llm }) });
   $("save").disabled = false;
-  if (!r.ok) { const e = await r.json().catch(() => ({})); $("status").textContent = "Save failed: " + (e.error || r.status); $("status").className = "status err"; return; }
+  if (!r.ok) { const e = await r.json().catch(() => ({})); $("status").textContent = r.status === 401 ? "Save failed: your sign-in expired. Reload to sign in again." : "Save failed: " + (e.error || r.status); $("status").className = "status err"; return; }
   const next = neighbour(1);
   S.labels[id] = { ...S.form }; S.dirty = false;
   $("status").textContent = "Saved"; $("status").className = "status";

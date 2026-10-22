@@ -9,19 +9,30 @@ checks, corrects and saves. Saving writes that rater's row in phase1.reviewed_ta
 whose answers pre-filled it (llm_model) and the items the rater changed (overrides).
 
 The dashboard never calls the LLM and never changes AI analyses.
+
+Two ways to run it:
+- On a laptop (`salud-phase1 dashboard --rater avni`): 127.0.0.1 only, the rater is fixed, no login.
+- As the team website on Vercel (api/index.py): no fixed rater. Every data request needs a session cookie,
+  which /api/login sets after the team passcode (TEAM_PASSCODE) and a rater name from the assignments.
+  The cookie is signed with a key derived from the passcode, so changing the passcode signs everyone out.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import mimetypes
 import threading
+import time
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from ..paths import REPO_ROOT
+from .assign import rater_name
 from .checklist import ITEM_DEFINITIONS, OUTCOMES, SENTIMENTS, TARGETS, TRANSCRIPT_ITEMS
 from .prompt import split_turns
 from .store import Store
@@ -29,13 +40,39 @@ from .store import Store
 BRANDING_DIR = REPO_ROOT / "branding"
 LOGO_NAMES = ["logo.svg", "logo.png", "logo.webp", "logo.jpg", "logo.jpeg"]
 SOURCE_LABELS = {"real": "Real", "synthetic": "Synthetic"}
+SESSION_COOKIE = "qa_session"
+SESSION_DAYS = 30
 
 
 def _logo_path() -> Path | None:
     return next((BRANDING_DIR / n for n in LOGO_NAMES if (BRANDING_DIR / n).exists()), None)
 
 
-def make_handler(store: Store, rater: str):
+def _session_key(passcode: str) -> bytes:
+    return hashlib.sha256(f"agent-call-analysis-session|{passcode}".encode()).digest()
+
+
+def make_session(passcode: str, rater: str, now: float | None = None) -> str:
+    expires = int((time.time() if now is None else now) + SESSION_DAYS * 86400)
+    body = f"{rater}|{expires}"
+    sig = hmac.new(_session_key(passcode), body.encode(), hashlib.sha256).hexdigest()
+    return f"{body}|{sig}"
+
+
+def read_session(passcode: str, value: str) -> str | None:
+    """The rater in a valid, unexpired session cookie, else None."""
+    try:
+        rater, expires, sig = value.rsplit("|", 2)
+        good = hmac.new(_session_key(passcode), f"{rater}|{expires}".encode(), hashlib.sha256).hexdigest()
+        return rater if hmac.compare_digest(sig, good) and int(expires) > time.time() else None
+    except ValueError:
+        return None
+
+
+def make_handler(store: Store, rater: str | None = None, passcode: str | None = None):
+    """rater set: a laptop dashboard for that rater. rater None: the website, signed in with passcode."""
+    if rater is None and not passcode:
+        raise ValueError("the website needs a team passcode")
     page = files("salud_pipeline.phase1").joinpath("static/dashboard.html").read_text()
     turns_cache: dict[str, dict] = {}
     cache_lock = threading.Lock()
@@ -52,7 +89,7 @@ def make_handler(store: Store, rater: str):
             turns_cache[call_id] = out
         return out
 
-    def state() -> dict:
+    def state(rater: str) -> dict:
         calls = store.calls()
         assigned = store.assignments()
         tags = store.tags(rater)
@@ -62,7 +99,7 @@ def make_handler(store: Store, rater: str):
         return {"config": {"rater": rater, "raters": sorted({r for rs in assigned.values() for r in rs}), "items": TRANSCRIPT_ITEMS, "definitions": ITEM_DEFINITIONS,
                            "sentiments": SENTIMENTS, "outcomes": OUTCOMES, "ai": ai,
                            "sources": [{"key": s, "label": SOURCE_LABELS.get(s, s)} for s in sources],
-                           "has_logo": _logo_path() is not None},
+                           "has_logo": _logo_path() is not None, "website": passcode is not None},
                 "calls": [{"id": c["call_id"], "file_id": c["file_id"], "source": c["source"],
                            "assignees": assigned.get(c["call_id"], [])} for c in calls],
                 "labels": labels}
@@ -76,17 +113,57 @@ def make_handler(store: Store, rater: str):
             self.end_headers()
             self.wfile.write(body)
 
-        def _json(self, payload, status: int = 200):
-            self._send(status, json.dumps(payload, default=str).encode(), "application/json")
+        def _json(self, payload, status: int = 200, cookie: str | None = None):
+            body = json.dumps(payload, default=str).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            if cookie is not None:
+                self.send_header("Set-Cookie", cookie)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def end_headers(self):
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Robots-Tag", "noindex, nofollow")
+            super().end_headers()
+
+        def _rater(self) -> str | None:
+            """Who is asking: the fixed laptop rater, or the rater in a valid website session."""
+            if rater is not None:
+                return rater
+            jar = SimpleCookie(self.headers.get("Cookie", ""))
+            return read_session(passcode, jar[SESSION_COOKIE].value) if SESSION_COOKIE in jar else None
+
+        def _cookie(self, value: str, max_age: int) -> str:
+            return (f"{SESSION_COOKIE}={value}; Max-Age={max_age}; Path=/; HttpOnly; Secure; SameSite=Strict")
+
+        def _login(self, body: dict):
+            if not hmac.compare_digest(str(body.get("passcode", "")).encode(), passcode.encode()):
+                time.sleep(1)  # slow down guessing
+                return self._json({"error": "Wrong passcode"}, 401)
+            raters = sorted({r for rs in store.assignments().values() for r in rs})
+            name = rater_name(str(body.get("rater", "")))
+            if not name:
+                return self._json({"raters": raters})
+            if name not in raters:
+                return self._json({"error": "Pick your name from the list"}, 400)
+            self._json({"ok": True}, cookie=self._cookie(make_session(passcode, name), SESSION_DAYS * 86400))
 
         def do_GET(self):
             url = urlparse(self.path)
             cid = parse_qs(url.query).get("id", [""])[0]
+            me = self._rater()
+            if url.path.startswith("/api/") and me is None:
+                return self._json({"error": "sign in", "login": True}, 401)
             try:
                 if url.path in ("/", "/index.html"):
                     self._send(200, page.encode(), "text/html; charset=utf-8")
                 elif url.path == "/api/state":
-                    self._json(state())
+                    self._json(state(me))
                 elif url.path == "/api/call":
                     t = transcript(cid)
                     self._json(t) if t else self._json({"error": "unknown call"}, 404)
@@ -106,13 +183,27 @@ def make_handler(store: Store, rater: str):
                 self._json({"error": str(e)}, 503)
 
         def do_POST(self):
-            if urlparse(self.path).path != "/api/label":
+            path = urlparse(self.path).path
+            if path not in ("/api/label", "/api/login", "/api/logout"):
                 return self._json({"error": "not found"}, 404)
+            if not self.headers.get("Content-Type", "").startswith("application/json"):
+                return self._json({"error": "expected JSON"}, 415)
             try:
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
-                store.save_tag(rater, body["id"], body["values"], body.get("llm"))
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                if path == "/api/login":
+                    if passcode is None:
+                        return self._json({"error": "not found"}, 404)
+                    return self._login(body)
+                if path == "/api/logout":
+                    return self._json({"ok": True}, cookie=self._cookie("", 0))
+                me = self._rater()
+                if me is None:
+                    return self._json({"error": "sign in", "login": True}, 401)
+                store.save_tag(me, body["id"], body["values"], body.get("llm"))
             except (ValueError, KeyError, json.JSONDecodeError) as e:
                 return self._json({"error": str(e)}, 400)
+            except RuntimeError as e:
+                return self._json({"error": str(e)}, 503)
             self._json({"ok": True})
 
         def log_message(self, *args):
