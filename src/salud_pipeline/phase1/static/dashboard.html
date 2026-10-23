@@ -16,7 +16,8 @@
   --agent: #f3f8ec; --caller: #f5f6f7; --system: #fafafa;
   --yes: #4f7a1c; --yes-soft: #eaf4dc; --no: #b3261e; --no-soft: #fbe9e7; --na: #5d6468; --na-soft: #eff1f2;
   --ai: #0f6b73; --ai-soft: #e6f3f4; --warn: #8a5a00; --warn-soft: #fdf3dc;
-  --pos: #1f6fb2; --neg: #b3261e;   /* turn sentiment: blue positive, red negative (as in CCAI) */
+  --pos: #1e3a8a; --neg: #991b1b;   /* turn sentiment: dark blue positive, dark red negative */
+  --pos-soft: #e8eefb; --neg-soft: #fbeaea;
   --hl: #c9e69a; --hl-ink: #1c2617; --shadow: 0 1px 2px rgba(28,38,23,.05), 0 2px 6px rgba(28,38,23,.06);
   --radius: 10px;
 }
@@ -77,7 +78,7 @@ nav { background: var(--panel); border-right: 1px solid var(--line); display: gr
 .dot.partial { background: var(--warn); border-color: var(--warn); }
 .dot.done { background: var(--yes); border-color: var(--yes); }
 
-.center { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); min-height: 0; min-width: 0; }
+.center { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); min-height: 0; min-width: 0; }
 .toolbar { display: flex; gap: 10px; align-items: center; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .toolbar input { flex: 1; max-width: 420px; }
 .toolbar .fid { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -94,19 +95,25 @@ nav { background: var(--panel); border-right: 1px solid var(--line); display: gr
 .turn.cited .bubble { border-color: color-mix(in srgb, var(--ai) 45%, transparent); }
 .turn.flash .bubble { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ai) 45%, transparent); }
 .turn.scored .bubble { border-left: 3px solid var(--tint); }
-.sscore { margin-left: 6px; font-weight: 600; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
-.senti { margin: 0 0 16px; padding: 10px 14px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
-.senti-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 13px; }
-.senti-head .tag { font-weight: 650; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.turn .who { display: flex; align-items: center; gap: 8px; }
+.sscore { margin-left: auto; font-size: 11px; font-weight: 650; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums;
+  padding: 0 7px; border-radius: 999px; line-height: 18px; }
+.sscore.neg { color: var(--neg); background: var(--neg-soft); }
+.sscore.pos { color: var(--pos); background: var(--pos-soft); }
+.sscore.neu { color: var(--muted); background: var(--na-soft); }
+/* Caller sentiment: fixed between the toolbar and the transcript, which scrolls on its own */
+#senti:not(:empty) { padding: 6px 20px 4px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.senti-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; font-size: 12px; }
+.senti-head .tag { font-weight: 650; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; cursor: help; }
 .senti-head .big { font-weight: 650; }
 .senti-head .muted { color: var(--muted); }
-.senti svg { display: block; width: 100%; height: auto; margin: 6px 0 2px; }
-.senti svg circle { cursor: pointer; }
-.senti-foot { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
-.senti-foot button { border: 0; background: none; padding: 0; cursor: pointer; color: var(--accent); font-size: 12px; }
-.senti-foot .key { display: inline-flex; align-items: center; gap: 4px; }
-.senti-foot .key i { display: inline-block; width: 14px; height: 0; border-top: 2px solid var(--ink); }
-.senti-foot .key i.agent { border-top: 2px dashed var(--faint); }
+.senti-head .right { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 2px 12px; color: var(--muted); }
+.senti-head button { border: 0; background: none; padding: 0; cursor: pointer; color: var(--accent); font-size: 12px; }
+.senti-head .key { display: inline-flex; align-items: center; gap: 4px; }
+.senti-head .key i { display: inline-block; width: 14px; height: 0; border-top: 2px solid var(--ink); opacity: .6; }
+.senti-head .key i.agent { border-top: 2px dashed var(--faint); }
+.senti-chart svg { display: block; width: 100%; margin-top: 2px; }
+.senti-chart svg circle { cursor: pointer; }
 mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding: 0 2px; box-shadow: inset 0 -2px 0 var(--accent); }
 mark.find { background: #fff1a8; color: inherit; }
 
@@ -285,7 +292,8 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; border: 1px solid v
         <input id="find" type="search" placeholder="Search transcript…" aria-label="Search transcript">
         <span class="fid" id="callid"></span>
       </div>
-      <div id="transcript" aria-label="Transcript"><div id="senti"></div><div id="summary"></div><div id="turns"></div></div>
+      <div id="senti"></div>
+      <div id="transcript" aria-label="Transcript"><div id="summary"></div><div id="turns"></div></div>
       <details class="coach" id="coach" open>
         <summary><span class="caret">▸</span> Agent coaching <span class="count" id="coachcount"></span></summary>
         <div id="tips"></div>
@@ -652,7 +660,7 @@ function tintTurns() {
     el.classList.add("scored"); el.style.setProperty("--tint", sColor(t.score));
     const who = el.querySelector(".who");
     if (who && !who.querySelector(".sscore")) who.insertAdjacentHTML("beforeend",
-      `<span class="sscore" style="color:${Math.abs(t.score) < 0.15 ? "var(--faint)" : `var(${t.score > 0 ? "--pos" : "--neg"})`}"
+      `<span class="sscore ${Math.abs(t.score) < 0.15 ? "neu" : t.score > 0 ? "pos" : "neg"}"
         title="Sentiment ${fmt(t.score)} (${esc(t.label)}), strength ${t.magnitude.toFixed(2)}">${fmt(t.score)}</span>`);
   });
 }
@@ -660,28 +668,30 @@ function tintTurns() {
 function renderSentiment() {
   const el = $("senti"), d = S.senti[S.cur];
   if (!d || d.none || !d.call || !d.call.caller_turns) { el.innerHTML = ""; return; }
-  const c = d.call, W = 600, H = 84, P = 8, n = Math.max(c.call_turns, 2);
+  const c = d.call, n = Math.max(c.call_turns, 2);
+  const word = (l) => cap(l || "");
+  el.innerHTML = `<div class="senti-head">
+      <span class="tag" title="Local model (${esc(d.model || "")}), display only: not part of your tags">Caller sentiment</span>
+      <span class="big" style="color:${Math.abs(c.caller_end) < 0.15 ? "var(--muted)" : `var(${c.caller_end > 0 ? "--pos" : "--neg"})`}">Ended ${esc(word(c.caller_end_label))} (${fmt(c.caller_end)})</span>
+      <span class="muted">Started ${fmt(c.caller_start)} · Shift ${fmt(c.caller_shift)} · Overall ${esc(c.caller_label)} (${fmt(c.caller_overall)})</span>
+      <span class="right"><span class="key"><i></i>Caller</span><span class="key"><i class="agent"></i>Agent</span>
+        <button type="button" data-turn="${c.caller_min_turn}">Lowest T${c.caller_min_turn} (${fmt(c.caller_min_score)}) →</button>
+        <button type="button" data-turn="${c.caller_max_turn}">Highest T${c.caller_max_turn} (${fmt(c.caller_max_score)}) →</button></span></div>
+    <div class="senti-chart" id="senti-chart"></div>`;
+  // Drawn at the panel's real width so the strip stays a fixed, short height.
+  const W = Math.max($("senti-chart").clientWidth, 200), H = 46, P = 5;
   const x = (turn) => P + (W - 2 * P) * (turn - 1) / (n - 1), y = (v) => H / 2 - (H / 2 - P) * v;
   const line = (role) => d.turns.filter((t) => t.role === role).map((t) => `${x(t.turn).toFixed(1)},${y(t.score).toFixed(1)}`).join(" ");
   const dots = d.turns.filter((t) => t.role === "caller").map((t) =>
-    `<circle cx="${x(t.turn).toFixed(1)}" cy="${y(t.score).toFixed(1)}" r="3.2" style="fill:${sColor(t.score)};stroke:var(--panel);stroke-width:1" data-turn="${t.turn}"><title>T${t.turn}: ${fmt(t.score)}</title></circle>`).join("");
-  const word = (l) => cap(l || "");
-  el.innerHTML = `<div class="senti">
-    <div class="senti-head"><span class="tag">Caller sentiment</span>
-      <span class="big" style="color:${sColor(c.caller_end)}">Ended ${esc(word(c.caller_end_label))} (${fmt(c.caller_end)})</span>
-      <span class="muted">Started ${fmt(c.caller_start)} · Shift ${fmt(c.caller_shift)} · Overall ${esc(c.caller_label)} (${fmt(c.caller_overall)})</span></div>
-    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Caller sentiment over the call, turn by turn">
+    `<circle cx="${x(t.turn).toFixed(1)}" cy="${y(t.score).toFixed(1)}" r="3" style="fill:${sColor(t.score)};stroke:var(--panel);stroke-width:1" data-turn="${t.turn}"><title>T${t.turn}: ${fmt(t.score)}</title></circle>`).join("");
+  $("senti-chart").innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Caller sentiment over the call, turn by turn">
       <line x1="${P}" x2="${W - P}" y1="${y(0)}" y2="${y(0)}" style="stroke:var(--line);stroke-width:1"/>
       <polyline points="${line("agent")}" style="fill:none;stroke:var(--faint);stroke-width:1.2;stroke-dasharray:3 3;opacity:.7"/>
       <polyline points="${line("caller")}" style="fill:none;stroke:var(--ink);stroke-width:1.5;opacity:.55"/>
-      ${dots}</svg>
-    <div class="senti-foot">
-      <span class="key"><i></i>Caller</span><span class="key"><i class="agent"></i>Agent</span>
-      <button type="button" data-turn="${c.caller_min_turn}">Lowest: T${c.caller_min_turn} (${fmt(c.caller_min_score)}) →</button>
-      <button type="button" data-turn="${c.caller_max_turn}">Highest: T${c.caller_max_turn} (${fmt(c.caller_max_score)}) →</button>
-      <span title="${esc(d.model || "")}">Local model · not part of your tags</span></div></div>`;
+      ${dots}</svg>`;
   el.querySelectorAll("[data-turn]").forEach((b) => b.onclick = () => jumpTo(+b.dataset.turn));
 }
+window.addEventListener("resize", () => { clearTimeout(window._sentiT); window._sentiT = setTimeout(renderSentiment, 120); });
 
 function setActive(k, sticky) {
   if (!sticky && S.activeSticky) return;
