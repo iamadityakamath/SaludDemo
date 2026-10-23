@@ -13,11 +13,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Turn-level call sentiment (salud-sentiment). Not in requirements.txt: the Vercel site doesn't run the model.
+sentiment = ["transformers>=4.44", "torch>=2.3"]
 
 [project.scripts]
 salud-phase1 = "salud_pipeline.phase1.cli:main"
 salud-db = "salud_pipeline.db:main"
 salud-synth = "salud_pipeline.phase2.synthetic.cli:main"
+salud-sentiment = "salud_pipeline.sentiment.cli:main"
 
 [build-system]
 requires = ["hatchling"]

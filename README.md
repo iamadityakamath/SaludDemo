@@ -120,6 +120,18 @@ Yes = `785570000` and No = `785570001`. NULL means "not scored" (Salud's rule fo
 
 On 60 synthetic test calls, the LLM agreed with the planted labels at checklist kappa **0.66**, against **0.15–0.38** for TF-IDF + logistic regression. Salud has about 10 real calls, far too few to train a classifier. See [`results/phase1_llm_vs_ml_2026-10-18/`](results/phase1_llm_vs_ml_2026-10-18/README.md). The ML code remains in git history (commit `487a6a7`).
 
+### Turn-level sentiment (local model)
+
+Like Google CCAI Insights: every caller and agent turn gets a **score** from -1 to 1 (P(positive) − P(negative)) and a **magnitude** from 0 to 1 (1 − P(neutral)), from [`cardiffnlp/twitter-roberta-base-sentiment-latest`](https://huggingface.co/cardiffnlp/twitter-roberta-base-sentiment-latest) (pinned revision). It runs on your machine, so real calls never leave it. Each call then gets caller and agent summaries: overall, **start** (first 30% of turns), **end** (last 30%), **shift** (end − start), lowest and highest turn, and a label (negative / mixed / neutral / positive).
+
+```bash
+uv pip install -e '.[sentiment]'   # transformers + torch; the first run downloads ~500 MB
+salud-sentiment run                # reads calls from the team database -> reports/sentiment/ (local, numbers only)
+salud-sentiment eval               # call labels vs planted labels, the LLM's label and raters' tags
+```
+
+Once `run` has been done, the local dashboard shows a sentiment curve above each transcript and tints each turn (blue positive, red negative). It's display only: it doesn't pre-fill or change tags, and the website doesn't show it. First results on the 60 calls: the **end** label agrees with raters' sentiment tags 81% of the time and the LLM's label 80%, against 59% / 65% for the whole-call average, so the dashboard leads with how the call ended.
+
 ---
 
 ## Phase 2: synthetic data for propensity
@@ -204,6 +216,7 @@ src/salud_pipeline/
     metrics.py          agreement, kappa, rater consensus
     calls.py            locating the Phase 1 call files (for the one-time import)
     cli.py              salud-phase1 dashboard | analyze | compare
+  sentiment/            turn-level sentiment (salud-sentiment): local model, call summaries, eval
   phase2/
     schema.py           tables and option codes from Salud's schema handoff
     outcome_labels.py   self-pay outcome labels at account grain

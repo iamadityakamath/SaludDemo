@@ -10,6 +10,9 @@ whose answers pre-filled it (llm_model) and the items the rater changed (overrid
 
 The dashboard never calls the LLM and never changes AI analyses.
 
+Turn-level sentiment (salud-sentiment run) is shown when reports/sentiment/ exists on this machine: a
+curve over the call and a tint on each turn. It is local only; the website has no results and hides it.
+
 Two ways to run it:
 - On a laptop (`salud-phase1 dashboard --rater avni`): 127.0.0.1 only, the rater is fixed, no login.
 - As the team website on Vercel (api/index.py): no fixed rater. Every data request needs a session cookie,
@@ -32,6 +35,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from ..paths import REPO_ROOT
+from ..sentiment.results import Results
 from .assign import rater_name
 from .checklist import ITEM_DEFINITIONS, OUTCOMES, SENTIMENTS, TARGETS, TRANSCRIPT_ITEMS
 from .prompt import split_turns
@@ -75,6 +79,7 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
         raise ValueError("the website needs a team passcode")
     page = files("salud_pipeline.phase1").joinpath("static/dashboard.html").read_text()
     turns_cache: dict[str, dict] = {}
+    sentiment = Results()
     cache_lock = threading.Lock()
 
     def transcript(call_id: str) -> dict | None:
@@ -172,6 +177,9 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
                     if store.transcript(cid) is None:
                         return self._json({"error": "unknown call"}, 404)
                     self._json(store.ai_analysis(cid) or {"none": True})
+                elif url.path == "/api/sentiment":
+                    # Local turn-level sentiment for this call, if `salud-sentiment run` has been run here.
+                    self._json(sentiment.for_call(cid) or {"none": True})
                 elif url.path == "/brand/logo":
                     p = _logo_path()
                     if p is None:
