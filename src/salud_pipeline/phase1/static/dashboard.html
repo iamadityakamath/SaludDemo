@@ -95,26 +95,18 @@ nav { background: var(--panel); border-right: 1px solid var(--line); display: gr
 .turn.flash .bubble { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ai) 45%, transparent); }
 .turn.scored .bubble { border-left: 3px solid var(--tint); }
 .sscore { margin-left: 6px; font-weight: 600; letter-spacing: 0; text-transform: none; font-variant-numeric: tabular-nums; }
-.senti { margin: 0 0 16px; padding: 10px 14px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); position: relative; }
+.senti { margin: 0 0 16px; padding: 10px 14px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
 .senti-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 13px; }
 .senti-head .tag { font-weight: 650; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .senti-head .big { font-weight: 650; }
 .senti-head .muted { color: var(--muted); }
-.senti-head .keys { margin-left: auto; display: inline-flex; gap: 12px; font-size: 12px; color: var(--muted); }
-.senti-head .keys i { display: inline-block; width: 16px; height: 0; border-top: 2.5px solid; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
-.senti-chart { position: relative; margin: 8px 0 4px; }
-.senti svg { display: block; width: 100%; overflow: visible; }
-.senti svg text { font-size: 10px; fill: var(--faint); }
-.senti svg .hl { cursor: pointer; }
-.senti svg .hl:hover { transform-box: fill-box; transform-origin: center; transform: scale(1.35); }
-.senti-tip { position: absolute; top: 0; pointer-events: none; background: var(--ink); color: #fff; font-size: 11px; line-height: 1.35;
-  padding: 4px 7px; border-radius: 6px; white-space: nowrap; transform: translateX(-50%); opacity: 0; transition: opacity .1s; }
-.senti-hls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.senti-hls button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); background: var(--panel-2);
-  border-radius: 999px; padding: 2px 9px 2px 7px; font-size: 12px; cursor: pointer; }
-.senti-hls button:hover { border-color: color-mix(in srgb, var(--ai) 45%, var(--line)); }
-.senti-hls b { font-variant-numeric: tabular-nums; }
-.senti-foot { font-size: 11px; color: var(--faint); margin-top: 6px; }
+.senti svg { display: block; width: 100%; height: auto; margin: 6px 0 2px; }
+.senti svg circle { cursor: pointer; }
+.senti-foot { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
+.senti-foot button { border: 0; background: none; padding: 0; cursor: pointer; color: var(--accent); font-size: 12px; }
+.senti-foot .key { display: inline-flex; align-items: center; gap: 4px; }
+.senti-foot .key i { display: inline-block; width: 14px; height: 0; border-top: 2px solid var(--ink); }
+.senti-foot .key i.agent { border-top: 2px dashed var(--faint); }
 mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding: 0 2px; box-shadow: inset 0 -2px 0 var(--accent); }
 mark.find { background: #fff1a8; color: inherit; }
 
@@ -665,111 +657,31 @@ function tintTurns() {
   });
 }
 
-const ROLE_COLOR = { caller: "#d97706", agent: "#6d28d9" };   // customer amber, agent purple (not the +/- tint colors)
-const ROLE_NAME = { caller: "Customer", agent: "Agent" };
-
-function smoothed(ts) {
-  // 1-2-1 average over neighbouring turns of the same speaker, so the line shows the trend, not every wobble.
-  return ts.map((t, i) => {
-    const a = ts[i - 1], b = ts[i + 1];
-    const v = (2 * t.score + (a ? a.score : t.score) + (b ? b.score : t.score)) / 4;
-    return { ...t, v };
-  });
-}
-
-function curve(pts, top, bottom) {
-  // Catmull-Rom spline through the points as cubic Béziers, control points kept inside the plot.
-  if (!pts.length) return "";
-  const cy = (v) => Math.min(bottom, Math.max(top, v));
-  let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
-    d += ` C${(p1.x + (p2.x - p0.x) / 6).toFixed(1)},${cy(p1.y + (p2.y - p0.y) / 6).toFixed(1)}`
-       + ` ${(p2.x - (p3.x - p1.x) / 6).toFixed(1)},${cy(p2.y - (p3.y - p1.y) / 6).toFixed(1)}`
-       + ` ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
-  }
-  return d;
-}
-
-function sentimentHighlights(d) {
-  // CCAI-style spotlight: the customer's strongest negative and positive moments, plus the AI's coaching tips.
-  const caller = d.turns.filter((t) => t.role === "caller");
-  const neg = caller.filter((t) => t.score <= -0.3).sort((a, b) => a.score - b.score).slice(0, 2)
-    .map((t) => ({ turn: t.turn, kind: "neg", text: `Customer negative`, val: t.score }));
-  const pos = caller.filter((t) => t.score >= 0.3).sort((a, b) => b.score - a.score).slice(0, 2)
-    .map((t) => ({ turn: t.turn, kind: "pos", text: `Customer positive`, val: t.score }));
-  const s = S.senti && sugg();
-  const tips = (s && s.coaching || []).filter((t) => t.turn)
-    .map((t) => ({ turn: t.turn, kind: "tip", text: `Coaching: ${LABEL[t.item] || t.item}` }));
-  return [...neg, ...pos, ...tips].sort((a, b) => a.turn - b.turn);
-}
-
-const HL_SHAPE = {
-  neg: (x, y) => `<path d="M${x - 5},${y - 4} L${x + 5},${y - 4} L${x},${y + 4} Z" style="fill:var(--neg)"/>`,
-  pos: (x, y) => `<path d="M${x - 5},${y + 4} L${x + 5},${y + 4} L${x},${y - 4} Z" style="fill:var(--pos)"/>`,
-  tip: (x, y) => `<path d="M${x},${y - 5} L${x + 5},${y} L${x},${y + 5} L${x - 5},${y} Z" style="fill:var(--ai)"/>`,
-};
-const HL_ICON = { neg: "▼", pos: "▲", tip: "◆" };
-const HL_COLOR = { neg: "var(--neg)", pos: "var(--pos)", tip: "var(--ai)" };
-
 function renderSentiment() {
   const el = $("senti"), d = S.senti[S.cur];
   if (!d || d.none || !d.call || !d.call.caller_turns) { el.innerHTML = ""; return; }
-  const c = d.call, n = Math.max(c.call_turns, 2);
+  const c = d.call, W = 600, H = 84, P = 8, n = Math.max(c.call_turns, 2);
+  const x = (turn) => P + (W - 2 * P) * (turn - 1) / (n - 1), y = (v) => H / 2 - (H / 2 - P) * v;
+  const line = (role) => d.turns.filter((t) => t.role === role).map((t) => `${x(t.turn).toFixed(1)},${y(t.score).toFixed(1)}`).join(" ");
+  const dots = d.turns.filter((t) => t.role === "caller").map((t) =>
+    `<circle cx="${x(t.turn).toFixed(1)}" cy="${y(t.score).toFixed(1)}" r="3.2" style="fill:${sColor(t.score)};stroke:var(--panel);stroke-width:1" data-turn="${t.turn}"><title>T${t.turn}: ${fmt(t.score)}</title></circle>`).join("");
   const word = (l) => cap(l || "");
   el.innerHTML = `<div class="senti">
-    <div class="senti-head"><span class="tag">Sentiment</span>
-      <span class="big" style="color:${sColor(c.caller_end)}">Customer ended ${esc(word(c.caller_end_label))} (${fmt(c.caller_end)})</span>
-      <span class="muted">Started ${fmt(c.caller_start)} · Shift ${fmt(c.caller_shift)}</span>
-      <span class="keys">${["caller", "agent"].map((r) => `<span><i style="border-color:${ROLE_COLOR[r]}"></i>${ROLE_NAME[r]}</span>`).join("")}</span></div>
-    <div class="senti-chart" id="senti-chart"></div>
-    <div class="senti-hls" id="senti-hls"></div>
-    <div class="senti-foot" title="${esc(d.model || "")}">Local model · display only, not part of your tags · click the chart to jump to a turn</div></div>`;
-
-  const box = $("senti-chart");
-  const W = Math.max(box.clientWidth, 280), H = 142, L = 60, R = 10, T = 8, B = 40;   // B: room for the highlight lane
-  const x = (turn) => L + (W - L - R) * (turn - 1) / (n - 1);
-  const y = (v) => T + (H - T - B) * (1 - v) / 2;
-  const grid = [[1, "Positive"], [0, "Neutral"], [-1, "Negative"]].map(([v, name]) =>
-    `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" style="stroke:var(--line);stroke-width:1;${v ? "stroke-dasharray:2 4" : ""}"/>
-     <text x="${L - 8}" y="${y(v) + 3}" text-anchor="end">${name}</text>`).join("");
-  const lines = ["agent", "caller"].map((r) => {
-    const pts = smoothed(d.turns.filter((t) => t.role === r)).map((t) => ({ x: x(t.turn), y: y(t.v) }));
-    return `<path d="${curve(pts, y(1), y(-1))}" style="fill:none;stroke:${ROLE_COLOR[r]};stroke-width:${r === "caller" ? 2.5 : 2};stroke-linecap:round;opacity:${r === "caller" ? 1 : .8}"/>`;
-  }).join("");
-  const laneY = H - B + 26, hls = sentimentHighlights(d);
-  const lane = `<line x1="${L}" x2="${W - R}" y1="${laneY}" y2="${laneY}" style="stroke:var(--line);stroke-width:1"/>
-    <text x="${L - 8}" y="${laneY + 3}" text-anchor="end">Highlights</text>`
-    + hls.map((h) => `<g class="hl" data-turn="${h.turn}">${HL_SHAPE[h.kind](x(h.turn), laneY)}<title>T${h.turn} · ${esc(h.text)}${h.val != null ? " " + fmt(h.val) : ""}</title></g>`).join("");
-  box.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Customer and agent sentiment over the call, with highlights">
-      ${grid}${lines}
-      <line id="senti-cursor" x1="0" x2="0" y1="${y(1)}" y2="${y(-1)}" style="stroke:var(--faint);stroke-width:1;opacity:0"/>
-      <circle id="senti-dot" r="4" style="opacity:0;stroke:var(--panel);stroke-width:1.5"/>
-      ${lane}
-      <rect id="senti-hit" x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" style="fill:transparent;cursor:pointer"/></svg>
-    <div class="senti-tip" id="senti-tip"></div>`;
-
-  $("senti-hls").innerHTML = hls.map((h) => `<button type="button" data-turn="${h.turn}">
-      <span style="color:${HL_COLOR[h.kind]}">${HL_ICON[h.kind]}</span><b>T${h.turn}</b>${esc(h.text)}${h.val != null ? ` <b>${fmt(h.val)}</b>` : ""}</button>`).join("");
+    <div class="senti-head"><span class="tag">Caller sentiment</span>
+      <span class="big" style="color:${sColor(c.caller_end)}">Ended ${esc(word(c.caller_end_label))} (${fmt(c.caller_end)})</span>
+      <span class="muted">Started ${fmt(c.caller_start)} · Shift ${fmt(c.caller_shift)} · Overall ${esc(c.caller_label)} (${fmt(c.caller_overall)})</span></div>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Caller sentiment over the call, turn by turn">
+      <line x1="${P}" x2="${W - P}" y1="${y(0)}" y2="${y(0)}" style="stroke:var(--line);stroke-width:1"/>
+      <polyline points="${line("agent")}" style="fill:none;stroke:var(--faint);stroke-width:1.2;stroke-dasharray:3 3;opacity:.7"/>
+      <polyline points="${line("caller")}" style="fill:none;stroke:var(--ink);stroke-width:1.5;opacity:.55"/>
+      ${dots}</svg>
+    <div class="senti-foot">
+      <span class="key"><i></i>Caller</span><span class="key"><i class="agent"></i>Agent</span>
+      <button type="button" data-turn="${c.caller_min_turn}">Lowest: T${c.caller_min_turn} (${fmt(c.caller_min_score)}) →</button>
+      <button type="button" data-turn="${c.caller_max_turn}">Highest: T${c.caller_max_turn} (${fmt(c.caller_max_score)}) →</button>
+      <span title="${esc(d.model || "")}">Local model · not part of your tags</span></div></div>`;
   el.querySelectorAll("[data-turn]").forEach((b) => b.onclick = () => jumpTo(+b.dataset.turn));
-
-  // Hover: snap to the nearest scored turn, show its speaker and score; click jumps there.
-  const hit = $("senti-hit"), tip = $("senti-tip"), cur = $("senti-cursor"), dot = $("senti-dot");
-  const nearest = (evt) => {
-    const r = hit.getBoundingClientRect(), px = L + (evt.clientX - r.left) * (W - L - R) / r.width;
-    return d.turns.reduce((best, t) => Math.abs(x(t.turn) - px) < Math.abs(x(best.turn) - px) ? t : best, d.turns[0]);
-  };
-  hit.onmousemove = (evt) => {
-    const t = nearest(evt), tx = x(t.turn), v = smoothed(d.turns.filter((u) => u.role === t.role)).find((u) => u.turn === t.turn).v;
-    cur.setAttribute("x1", tx); cur.setAttribute("x2", tx); cur.style.opacity = 1;
-    dot.setAttribute("cx", tx); dot.setAttribute("cy", y(v)); dot.style.fill = ROLE_COLOR[t.role]; dot.style.opacity = 1;
-    tip.innerHTML = `T${t.turn} · ${ROLE_NAME[t.role]} ${fmt(t.score)} <span style="opacity:.7">(${esc(t.label)})</span>`;
-    tip.style.left = `${Math.min(Math.max(tx * box.clientWidth / W, 70), box.clientWidth - 70)}px`; tip.style.top = "-6px"; tip.style.opacity = 1;
-  };
-  hit.onmouseleave = () => { cur.style.opacity = 0; dot.style.opacity = 0; tip.style.opacity = 0; };
-  hit.onclick = (evt) => jumpTo(nearest(evt).turn);
 }
-window.addEventListener("resize", () => { clearTimeout(window._sentiT); window._sentiT = setTimeout(renderSentiment, 120); });
 
 function setActive(k, sticky) {
   if (!sticky && S.activeSticky) return;
@@ -811,7 +723,7 @@ async function loadAI(id) {
   let res;
   try { res = await (await fetch("/api/analysis?id=" + encodeURIComponent(id))).json(); } catch (e) { res = {}; }
   S.sugg[id] = res && res.checklist ? res : { none: true };
-  if (S.cur === id) { setAiChip(); applySuggestion(id); renderSentiment(); }   // coaching tips become highlights
+  if (S.cur === id) { setAiChip(); applySuggestion(id); }
 }
 
 function applySuggestion(id) {
