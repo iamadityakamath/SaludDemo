@@ -495,8 +495,7 @@ function buildForm() {
       <span class="info" title="${esc(S.config.definitions[k])}">i</span><span class="changed" hidden>changed</span><span class="flag" hidden></span></span></div>
       <div class="reason"></div><div class="evs"></div>`;
     card.querySelector(".card-head").appendChild(segButtons(["Yes", "No", "N/A"], k));
-    card.onmouseenter = () => setActive(k);
-    card.onclick = () => setActive(k, true);
+    card.onclick = () => setActive(k, true);   // highlight the item's evidence turns on click only, not on hover
     $("items").appendChild(card);
   });
   $("sentiment").appendChild(segButtons(S.config.sentiments, "sentiment", true));
