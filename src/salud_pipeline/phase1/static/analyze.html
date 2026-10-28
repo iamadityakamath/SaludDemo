@@ -217,6 +217,16 @@ dialog .warn { font-size: 12px; color: var(--warn); }
   </form>
 </div>
 
+<dialog id="redodlg">
+  <form method="dialog">
+    <h3>Re-analyze this Phase 1 call?</h3>
+    <p>This replaces its stored sentiment and AI review. The comparison with raters' tags will then use the new review.</p>
+    <div class="row"><span></span>
+      <span><button type="submit" class="btn" value="cancel">Cancel</button>
+      <button type="submit" class="btn primary" value="ok" id="redo-ok">Re-analyze</button></span></div>
+  </form>
+</dialog>
+
 <dialog id="newdlg">
   <form method="dialog" id="newform">
     <h3>Analyze a new call</h3>
@@ -329,11 +339,21 @@ async function show(id) {
   renderTranscript(); renderResults();
 }
 
+// An in-page dialog rather than window.confirm(), which some embedded browsers block (it then returns false
+// and the click silently does nothing).
+function confirmRedo() {
+  const dlg = $("redodlg");
+  return new Promise((resolve) => {
+    dlg.returnValue = "";
+    dlg.addEventListener("close", () => resolve(dlg.returnValue === "ok"), { once: true });
+    dlg.showModal(); $("redo-ok").focus();
+  });
+}
+
 async function analyze(redo) {
   const id = S.cur; if (!id) return;
   const c = S.byId[id];
-  if (redo && c && c.source !== "new" && !confirm("Re-analyze this Phase 1 call?\n\nThis replaces its stored sentiment and AI review. "
-      + "The comparison with raters' tags will then use the new review.")) return;
+  if (redo && c && c.source !== "new" && !(await confirmRedo())) return;
   const btn = redo ? $("reanalyze") : $("analyze"), label = btn.innerHTML;
   $("analyze").disabled = $("reanalyze").disabled = true;
   btn.innerHTML = `<span class="spin"></span>${redo ? "Re-analyzing…" : "Analyzing…"}`;
