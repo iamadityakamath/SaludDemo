@@ -1,17 +1,17 @@
 # Instructions for AI coding assistants (Claude Code, ChatGPT / Codex, Cursor, …)
 
-This repo is UIUC BIG Team B's Salud project. A teammate has just cloned it and wants to **tag calls on the
-Phase 1 dashboard**. Your job: get the dashboard running and open it for them. Follow these steps in order
+This repo is UIUC BIG Team B's Salud project. A teammate has just cloned it and wants to **analyze calls on the
+agent dashboard**. Your job: get the dashboard running and open it for them. Follow these steps in order
 and keep your messages short; the user is a teammate, not necessarily a developer.
 
 **First, check whether they need local setup at all:** the dashboard is also a website,
-https://agent-call-analysis.vercel.app (team passcode, then their name). If they only want to tag calls,
+https://agent-call-analysis.vercel.app (team passcode, then their name). If they only want to analyze calls,
 point them there and stop. Continue below only if they want it running locally.
 
 ## 1. Ask the user for two things (before running anything)
 
 1. **Their first name**, lower case. It must be one of: `avni`, `sharayu`, `aditya`, `ibrahim`, `ananya`,
-   `rudrakshi`. Their calls are already assigned under that name.
+   `rudrakshi`. Pasted calls are saved under that name.
 2. **The team database connection string** (`DATABASE_URL`), which the team lead shared privately.
    It starts with `postgresql://` and its host contains `-pooler`.
 
@@ -66,14 +66,12 @@ may open that URL in it.
 
 ## 5. Tell the user how to use it (keep it to these points)
 
-- The list on the left opens on **"My calls"**: the calls assigned to them (11–12 each).
-- Each call is **pre-filled with the AI's answers**. Check each item against the transcript, change any
-  answer that's wrong, pick sentiment and outcome, then **Save & next** (⌘S / Ctrl+S).
-- **Red** section = the AI gave no supporting quote; decide it yourself. It turns green once answered.
-- **Yes** = the agent did this item correctly, **No** = they didn't, **N/A** = the item doesn't apply
-  to this call (e.g. no balance discussed).
-- Saving goes straight to the shared database. They can stop any time and continue later; to stop the
-  dashboard, press Ctrl+C in its terminal (or stop the background process).
+- Pick a call on the left and click **Analyze**: customer sentiment (how the call ended, the shift, a score
+  on every turn), the QA score and checklist with quotes, the AI summary, outcome and coaching tips.
+- **+ Analyze a new call** takes a pasted transcript (one turn per paragraph, `Agent: …` / `Patient: …`). It is
+  saved to the shared database and, when an LLM key is set, sent to Groq for the review. Redacted text only.
+- **↻ Re-analyze** redoes sentiment and the AI review and replaces the stored ones.
+- To stop the dashboard, press Ctrl+C in its terminal (or stop the background process).
 
 ## Troubleshooting
 
@@ -90,7 +88,8 @@ may open that URL in it.
 
 - **Don't run `salud-db setup`, `salud-phase1 assign --raters …` or `salud-phase1 analyze`.** They change
   the shared team database (the first two are for the team lead) or send real calls to an external LLM.
-- **Don't write to the database** with SQL or scripts, and don't delete or edit anyone's tags.
+- **Don't write to the database** with SQL or scripts, and don't delete or edit anyone's tags (Phase 1's
+  manual tags are finished and kept for the comparison).
 - **Don't read or print transcripts, tags or AI analyses** into the chat. The database holds Salud's real
   (redacted) calls; only the dashboard should show them.
 - Don't change code, commit or push. This setup needs no code changes.

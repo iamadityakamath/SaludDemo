@@ -9,12 +9,13 @@ dependencies = [
     "openpyxl>=3.1",
     "psycopg[binary]>=3.2",
     "psycopg-pool>=3.2",
+    # Sentiment model (int8 ONNX), run by the dashboard's Analyze and salud-sentiment
+    "onnxruntime>=1.20",
+    "tokenizers>=0.20",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
-# Turn-level call sentiment (salud-sentiment): the int8 ONNX model. Also in requirements.txt (the website's live Analyze).
-sentiment = ["onnxruntime>=1.20", "tokenizers>=0.20"]
 
 [project.scripts]
 salud-phase1 = "salud_pipeline.phase1.cli:main"

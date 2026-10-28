@@ -5,7 +5,8 @@ The dashboard, `analyze` and `compare` all go through this class, so every teamm
 data from their own laptop. Connection: DATABASE_URL (pooled) from .env.
 
 Rules the database code enforces:
-- AI analyses are only ever added, never changed (insert ... on conflict do nothing).
+- AI analyses are only ever added (insert ... on conflict do nothing), except that Re-analyze on the agent
+  dashboard replaces one call's analysis (replace_ai_analysis).
 - A rater's tag for a call is one row; saving again replaces that rater's own row only.
 - Calls pasted on the /analyze page (source 'new') stay out of tagging, assignments and comparisons:
   calls(), ai_info() and ai_analyses() leave them out unless asked.
@@ -132,6 +133,14 @@ class Store:
                 c.execute("INSERT INTO phase1.ai_coaching (call_id, tip_no, item, tip, turn) VALUES (%s,%s,%s,%s,%s)",
                           (call_id, i, t.get("item"), t.get("tip"), t.get("turn")))
         return True
+
+    def replace_ai_analysis(self, call_id: str, analysis: dict, model: str, prompt_version: str) -> None:
+        """Re-analyze on the agent dashboard: drop this call's stored analysis (with its checklist and coaching
+        rows) and add the new one. The only place an analysis is ever changed, and only for this one call."""
+        with self.pool.connection() as c, c.transaction():
+            for table in ("ai_coaching", "ai_checklist", "ai_analyses"):
+                c.execute(f"DELETE FROM phase1.{table} WHERE call_id = %s", (call_id,))
+        self.add_ai_analysis(call_id, analysis, model, prompt_version)
 
     # ---- turn-level sentiment (salud-sentiment) ----
     def save_sentiment(self, call_id: str, turns: list[dict], summary: dict, model: str) -> None:

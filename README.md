@@ -13,7 +13,7 @@ Phase 1's AI analyses (`phase1.ai_analyses`, joined to `big_synthetic` accounts)
 
 ## Team setup
 
-**Just tagging?** Use the team website, **https://agent-call-analysis.vercel.app**: sign in with the team passcode (shared privately by the team lead) and pick your name. There's nothing to install. The setup below is for running things locally.
+**Just analyzing calls?** Use the team website, **https://agent-call-analysis.vercel.app**: sign in with the team passcode (shared privately by the team lead) and pick your name. There's nothing to install. The setup below is for running things locally.
 
 **The website on Vercel** (project `agent-call-analysis`) runs the same dashboard from [`api/index.py`](api/index.py). Every push to `main` redeploys it.
 - **Sign-in:** data only loads after the team passcode and a name from the assignments. The session is an HttpOnly cookie, signed with a key derived from the passcode and valid for 30 days.
@@ -30,7 +30,7 @@ cp .env.example .env     # paste DATABASE_URL (from the team lead); GROQ_API_KEY
 .venv/bin/salud-phase1 dashboard --rater <your first name>   # e.g. avni
 ```
 
-- **Using Claude Code, ChatGPT/Codex or Cursor?** Open the cloned folder and ask it to *"set up and open the tagging dashboard"*. [`AGENTS.md`](AGENTS.md) (also loaded by `CLAUDE.md`) walks the assistant through the setup and tells it what not to touch.
+- **Using Claude Code, ChatGPT/Codex or Cursor?** Open the cloned folder and ask it to *"set up and open the agent dashboard"*. [`AGENTS.md`](AGENTS.md) (also loaded by `CLAUDE.md`) walks the assistant through the setup and tells it what not to touch.
 - **Connection string.** It's shared privately by the team lead. Never commit it; this repository is public.
 - **Real call data.** The database holds Salud's 10 redacted real calls. This Neon project isn't HIPAA-enabled, so keep access to the team, and confirm with Salud before sharing it further.
 - **Team lead only:** `salud-db setup` applies schema changes and imports local files. It's safe to rerun; it only adds what's missing.
@@ -39,28 +39,20 @@ cp .env.example .env     # paste DATABASE_URL (from the team lead); GROQ_API_KEY
 
 ## Phase 1: call analysis
 
-### Route 1: dashboard (review the AI's answers and tag)
+### Route 1: the agent dashboard
 
 ```bash
-.venv/bin/salud-phase1 assign --raters avni,sharayu,aditya,ibrahim,ananya,rudrakshi   # team lead, once
-.venv/bin/salud-phase1 dashboard --rater avni
+.venv/bin/salud-phase1 dashboard --rater avni     # local: http://127.0.0.1:8765, no sign-in
 ```
 
-Each teammate runs it on their own laptop (http://127.0.0.1:8765). They all read and write the same database.
+Or use the team website (passcode, then your name). Pick a call, click **Analyze**, and see:
+- customer sentiment: how the call ended, the shift from the start, the curve, and a score on every turn
+- the QA score and checklist answers, with transcript quotes that jump to their turn
+- the AI summary, the call outcome and coaching tips for the agent
 
-- **Who tags what:** `assign` splits the calls evenly. Each real call gets **2 raters**, so rater agreement can be measured on Salud's own calls, and each synthetic call gets 1. That's 70 tags, 11–12 per person. Running it again only fills calls that are short of raters and never moves existing assignments. `salud-phase1 assign` with no options shows who has what and how many each person has tagged.
-- **The list opens on "My calls".** The menu at the top of the list switches to "All raters" or to another rater's calls; badges like `Av · Sh` show who's assigned. Use the same first name you were assigned under (case doesn't matter).
+**Analyze a new call** takes a pasted transcript, saves it as source `new`, scores its sentiment in the server and runs the LLM review (when `GROQ_API_KEY` is set), all saved to Neon. **Analyze** only fills in what a call is missing, so stored calls load instantly at no cost. **Re-analyze** redoes both and replaces the stored sentiment and AI review (for a Phase 1 call it asks first, since that call's comparison with raters' tags will then use the new review).
 
-- **Every call opens pre-filled** with its AI analysis:
-  - checklist answers, with reasons and highlighted transcript quotes
-  - caller sentiment and call outcome
-  - a summary and coaching tips
-- **The dashboard never calls the LLM and never changes AI analyses.**
-- **You check, correct and save.** A section is **red** when the AI's answer has no supporting quote, and turns **green** once you choose the answer yourself.
-- **Saving writes your row** in `phase1.reviewed_tags` (one row per call per rater):
-  - `llm_model` records which AI answers pre-filled it.
-  - `overrides` lists the items you changed.
-  - Raters only see their own tags.
+Manual tagging is finished, and its page has been removed. The tags saved during Phase 1 stay in `phase1.reviewed_tags` (assigned with `salud-phase1 assign`, two raters per real call), and `salud-phase1 compare` still uses them.
 
 ### Route 2: script (AI analysis, then comparison)
 
@@ -125,16 +117,11 @@ On 60 synthetic test calls, the LLM agreed with the planted labels at checklist 
 Like Google CCAI Insights: every caller and agent turn gets a **score** from -1 to 1 (P(positive) − P(negative)) and a **magnitude** from 0 to 1 (1 − P(neutral)), from [`cardiffnlp/twitter-roberta-base-sentiment-latest`](https://huggingface.co/cardiffnlp/twitter-roberta-base-sentiment-latest), run as a pinned int8 ONNX copy ([Xenova's conversion](https://huggingface.co/Xenova/twitter-roberta-base-sentiment-latest), 126 MB). The same model runs on laptops and on the website, so scores don't depend on where a call was scored; it matches the full PyTorch model on 97% of turn labels. Each call gets caller and agent summaries: overall, **start** (first 30% of turns), **end** (last 30%), **shift** (end − start), lowest and highest turn, and a label (negative / mixed / neutral / positive). Results live in the team database (`phase1.turn_sentiment`, `phase1.call_sentiment`).
 
 ```bash
-uv pip install -e '.[sentiment]'   # onnxruntime + tokenizers; the first run downloads the model (~130 MB)
-salud-sentiment run                # score calls not scored yet -> team database (--redo to rescore)
+salud-sentiment run                # first run downloads the model (~130 MB); scores calls not scored yet -> team database (--redo to rescore)
 salud-sentiment eval               # call labels vs planted labels, the LLM's label and raters' tags
 ```
 
-The tagging page shows a sentiment strip above each transcript and a score on each turn (display only; it never pre-fills tags). On the 60 calls, the **end** label agrees with raters' sentiment tags about 75–80% of the time against about 60% for the whole-call average, so both pages lead with how the call ended.
-
-### Agent dashboard (`/analyze`)
-
-The analysis view for agents, on the same site as tagging (`/analyze`, link in the header, same passcode). Pick a call, click **Analyze**, and see: customer sentiment (ended, shift, the curve, a score on every turn), QA score and checklist answers with transcript quotes, the AI summary and outcome, and coaching tips that jump to their turn. **Analyze a new call** takes a pasted transcript, saves it as source `new`, scores sentiment in the server and runs the LLM review (when `GROQ_API_KEY` is set), all saved to Neon. Analyze only fills in what a call is missing, so the 60 Phase 1 calls load instantly at no cost. Pasted calls never appear on the tagging page or in comparisons.
+On the 60 calls, the **end** label agrees with raters' sentiment tags about 75–80% of the time against about 60% for the whole-call average, so the dashboard leads with how the call ended.
 
 ---
 
@@ -214,8 +201,8 @@ src/salud_pipeline/
     store.py            the team database for Phase 1 (calls, transcripts, AI analyses, tags)
     checklist.py        checklist items, outcomes, definitions
     prompt.py           the LLM prompt, response checking, local LLM cache
-    dashboard.py        route 1: dashboard server   (static/dashboard.html: tagging, static/analyze.html: agent dashboard)
-    live.py             the agent dashboard's Analyze: sentiment + LLM review for calls missing them
+    dashboard.py        route 1: the agent dashboard server   (static/analyze.html: the page)
+    live.py             Analyze / Re-analyze: sentiment + LLM review, saved to the database
     analyze.py          route 2, step 1: LLM on every call -> database
     compare.py          route 2, step 2: AI vs tags -> Excel / CSV
     metrics.py          agreement, kappa, rater consensus

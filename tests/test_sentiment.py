@@ -116,7 +116,7 @@ def _drop(store, call_id):
         c.execute("DELETE FROM phase1.calls WHERE call_id = %s", (call_id,))   # sentiment rows cascade
 
 
-@pytest.mark.skipif(importlib.util.find_spec("onnxruntime") is None, reason="optional [sentiment] install")
+@pytest.mark.skipif(importlib.util.find_spec("onnxruntime") is None, reason="onnxruntime not installed")
 def test_real_model_scores_obvious_sentences():
     from salud_pipeline.sentiment.model import SentimentModel
 
@@ -148,15 +148,13 @@ def test_analyze_page_scores_a_pasted_call_without_the_llm(store, monkeypatch):
 
     cid = None
     try:
-        assert b"Agent Dashboard" in urllib.request.urlopen(url + "/analyze").read()
         r = post("/api/analyze/new", {"transcript": CALL})
         cid = r["id"]
         assert r["sentiment"]["call"]["caller_end_label"] == "positive" and r["analysis"] == {"none": True}
         assert "isn't set up" in r["notes"][0]
         listed = json.loads(urllib.request.urlopen(url + "/api/analyze/list").read())
         assert any(c["call_id"] == cid and c["scored"] for c in listed["calls"]) and listed["llm"] is False
-        tagging = json.loads(urllib.request.urlopen(url + "/api/state").read())
-        assert cid not in {c["id"] for c in tagging["calls"]}            # pasted calls never reach tagging
+        assert cid not in {c["call_id"] for c in store.calls()}            # pasted calls stay out of comparisons
         again = post("/api/analyze/run", {"id": cid})                  # existing results load, nothing redone
         assert again["sentiment"] == r["sentiment"]
     finally:

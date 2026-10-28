@@ -72,7 +72,8 @@ class SentimentModel:
             import onnxruntime as ort
             from tokenizers import Tokenizer
         except ImportError:
-            raise SystemExit("Sentiment needs the optional install: pip install -e '.[sentiment]'") from None
+            raise RuntimeError("The sentiment model needs onnxruntime and tokenizers: rerun the install "
+                               "(pip install -e '.[dev]')") from None
         self._np = np
         folder = download()
         self.tokenizer = Tokenizer.from_file(str(folder / "tokenizer.json"))

@@ -1,26 +1,18 @@
-"""Phase 1 route 1: the dashboard for reviewing and tagging calls, backed by the team's Neon database.
+"""The agent dashboard, backed by the team's Neon database: pick a call or paste a new one, click Analyze, and see
+its sentiment, QA checklist results, summary, outcome and coaching tips (static/analyze.html).
 
     salud-phase1 dashboard --rater avni
 
-Runs on each teammate's laptop (127.0.0.1 only) and talks to the shared Neon database (store.py):
-calls and transcripts, the AI analyses that `salud-phase1 analyze` added, and every rater's tags.
-The list opens on the calls assigned to this rater (salud-phase1 assign). Each call opens pre-filled with its AI answers, quotes, sentiment, outcome and coaching tips; the rater
-checks, corrects and saves. Saving writes that rater's row in phase1.reviewed_tags, recording the model
-whose answers pre-filled it (llm_model) and the items the rater changed (overrides).
-
-The dashboard never calls the LLM and never changes AI analyses.
-
-Turn-level sentiment (phase1.call_sentiment) shows as a strip above the transcript and a score on each turn.
-
-/analyze is the agent dashboard (static/analyze.html): pick a call or paste a new one, click Analyze, and see
-its sentiment, checklist results, summary, outcome and coaching tips. Analyze fills in only what a call is
-missing (live.py); pasted calls are saved as source 'new' and never appear on the tagging page.
+Analyze fills in only what a call is missing (live.py): sentiment scored in this process, and the LLM review
+when an API key is set. Re-analyze redoes both and replaces the stored results. Calls pasted on the page are
+saved as source 'new'. The manual tagging page is gone; tags saved during Phase 1 stay in phase1.reviewed_tags
+for `salud-phase1 compare`.
 
 Two ways to run it:
-- On a laptop (`salud-phase1 dashboard --rater avni`): 127.0.0.1 only, the rater is fixed, no login.
-- As the team website on Vercel (api/index.py): no fixed rater. Every data request needs a session cookie,
-  which /api/login sets after the team passcode (TEAM_PASSCODE) and a rater name from the assignments.
-  The cookie is signed with a key derived from the passcode, so changing the passcode signs everyone out.
+- On a laptop (`salud-phase1 dashboard --rater avni`): 127.0.0.1 only, the user is fixed, no login.
+- As the team website on Vercel (api/index.py). Every data request needs a session cookie, which /api/login
+  sets after the team passcode (TEAM_PASSCODE) and a name from the assignments. The cookie is signed with a
+  key derived from the passcode, so changing the passcode signs everyone out.
 """
 
 from __future__ import annotations
@@ -40,13 +32,12 @@ from urllib.parse import parse_qs, urlparse
 from ..paths import REPO_ROOT
 from .assign import rater_name
 from . import live
-from .checklist import ITEM_DEFINITIONS, OUTCOMES, SENTIMENTS, TARGETS, TRANSCRIPT_ITEMS
+from .checklist import ITEM_DEFINITIONS, TRANSCRIPT_ITEMS
 from .prompt import split_turns
 from .store import Store
 
 BRANDING_DIR = REPO_ROOT / "branding"
 LOGO_NAMES = ["logo.svg", "logo.png", "logo.webp", "logo.jpg", "logo.jpeg"]
-SOURCE_LABELS = {"real": "Real", "synthetic": "Synthetic"}
 SESSION_COOKIE = "qa_session"
 SESSION_DAYS = 30
 
@@ -80,8 +71,7 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
     """rater set: a laptop dashboard for that rater. rater None: the website, signed in with passcode."""
     if rater is None and not passcode:
         raise ValueError("the website needs a team passcode")
-    page = files("salud_pipeline.phase1").joinpath("static/dashboard.html").read_text()
-    analyze_page = files("salud_pipeline.phase1").joinpath("static/analyze.html").read_text()
+    page = files("salud_pipeline.phase1").joinpath("static/analyze.html").read_text()
     turns_cache: dict[str, dict] = {}
     cache_lock = threading.Lock()
 
@@ -96,21 +86,6 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
         with cache_lock:
             turns_cache[call_id] = out
         return out
-
-    def state(rater: str) -> dict:
-        calls = store.calls()
-        assigned = store.assignments()
-        tags = store.tags(rater)
-        labels = {r["call_id"]: {k: (r[k] or "") for k in TARGETS + ["notes"]} for r in tags.to_dict("records")}
-        sources = list(dict.fromkeys(c["source"] for c in calls))
-        ai = store.ai_info() | {"file": "the team database"}
-        return {"config": {"rater": rater, "raters": sorted({r for rs in assigned.values() for r in rs}), "items": TRANSCRIPT_ITEMS, "definitions": ITEM_DEFINITIONS,
-                           "sentiments": SENTIMENTS, "outcomes": OUTCOMES, "ai": ai,
-                           "sources": [{"key": s, "label": SOURCE_LABELS.get(s, s)} for s in sources],
-                           "has_logo": _logo_path() is not None, "website": passcode is not None},
-                "calls": [{"id": c["call_id"], "file_id": c["file_id"], "source": c["source"],
-                           "assignees": assigned.get(c["call_id"], [])} for c in calls],
-                "labels": labels}
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status: int, body: bytes, ctype: str):
@@ -168,27 +143,15 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
             if url.path.startswith("/api/") and me is None:
                 return self._json({"error": "sign in", "login": True}, 401)
             try:
-                if url.path in ("/", "/index.html"):
+                if url.path in ("/", "/index.html", "/analyze"):
                     self._send(200, page.encode(), "text/html; charset=utf-8")
-                elif url.path == "/analyze":
-                    self._send(200, analyze_page.encode(), "text/html; charset=utf-8")
                 elif url.path == "/api/analyze/list":
                     self._json({"me": me, "website": passcode is not None, "llm": live.llm_ready(),
                                 "items": TRANSCRIPT_ITEMS, "definitions": ITEM_DEFINITIONS,
                                 "calls": store.analysis_list()})
-                elif url.path == "/api/state":
-                    self._json(state(me))
                 elif url.path == "/api/call":
                     t = transcript(cid)
                     self._json(t) if t else self._json({"error": "unknown call"}, 404)
-                elif url.path == "/api/analysis":
-                    # The saved AI analysis for this call (read-only); the dashboard never calls the LLM.
-                    if store.transcript(cid) is None:
-                        return self._json({"error": "unknown call"}, 404)
-                    self._json(store.ai_analysis(cid) or {"none": True})
-                elif url.path == "/api/sentiment":
-                    # Turn-level sentiment for this call (salud-sentiment run or the Analyze page), if scored.
-                    self._json(store.sentiment(cid) or {"none": True})
                 elif url.path == "/brand/logo":
                     p = _logo_path()
                     if p is None:
@@ -201,7 +164,7 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
 
         def do_POST(self):
             path = urlparse(self.path).path
-            if path not in ("/api/label", "/api/login", "/api/logout", "/api/analyze/run", "/api/analyze/new"):
+            if path not in ("/api/login", "/api/logout", "/api/analyze/run", "/api/analyze/new"):
                 return self._json({"error": "not found"}, 404)
             if not self.headers.get("Content-Type", "").startswith("application/json"):
                 return self._json({"error": "expected JSON"}, 415)
@@ -222,14 +185,11 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
                         raise ValueError(f"the transcript is too long (max {live.MAX_TRANSCRIPT_CHARS:,} characters)")
                     cid = store.add_new_call(text, me)
                     return self._json({"id": cid} | live.analyze(store, cid))
-                if path == "/api/analyze/run":
-                    return self._json(live.analyze(store, str(body["id"])))
-                store.save_tag(me, body["id"], body["values"], body.get("llm"))
+                return self._json(live.analyze(store, str(body["id"]), redo=bool(body.get("redo"))))
             except (ValueError, KeyError, json.JSONDecodeError) as e:
                 return self._json({"error": str(e)}, 400)
             except RuntimeError as e:
                 return self._json({"error": str(e)}, 503)
-            self._json({"ok": True})
 
         def log_message(self, *args):
             pass
