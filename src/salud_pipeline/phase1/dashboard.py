@@ -10,8 +10,11 @@ whose answers pre-filled it (llm_model) and the items the rater changed (overrid
 
 The dashboard never calls the LLM and never changes AI analyses.
 
-Turn-level sentiment (salud-sentiment run) is shown when reports/sentiment/ exists on this machine: a
-curve over the call and a tint on each turn. It is local only; the website has no results and hides it.
+Turn-level sentiment (phase1.call_sentiment) shows as a strip above the transcript and a score on each turn.
+
+/analyze is the agent dashboard (static/analyze.html): pick a call or paste a new one, click Analyze, and see
+its sentiment, checklist results, summary, outcome and coaching tips. Analyze fills in only what a call is
+missing (live.py); pasted calls are saved as source 'new' and never appear on the tagging page.
 
 Two ways to run it:
 - On a laptop (`salud-phase1 dashboard --rater avni`): 127.0.0.1 only, the rater is fixed, no login.
@@ -35,8 +38,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from ..paths import REPO_ROOT
-from ..sentiment.results import Results
 from .assign import rater_name
+from . import live
 from .checklist import ITEM_DEFINITIONS, OUTCOMES, SENTIMENTS, TARGETS, TRANSCRIPT_ITEMS
 from .prompt import split_turns
 from .store import Store
@@ -78,8 +81,8 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
     if rater is None and not passcode:
         raise ValueError("the website needs a team passcode")
     page = files("salud_pipeline.phase1").joinpath("static/dashboard.html").read_text()
+    analyze_page = files("salud_pipeline.phase1").joinpath("static/analyze.html").read_text()
     turns_cache: dict[str, dict] = {}
-    sentiment = Results()
     cache_lock = threading.Lock()
 
     def transcript(call_id: str) -> dict | None:
@@ -167,6 +170,12 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
             try:
                 if url.path in ("/", "/index.html"):
                     self._send(200, page.encode(), "text/html; charset=utf-8")
+                elif url.path == "/analyze":
+                    self._send(200, analyze_page.encode(), "text/html; charset=utf-8")
+                elif url.path == "/api/analyze/list":
+                    self._json({"me": me, "website": passcode is not None, "llm": live.llm_ready(),
+                                "items": TRANSCRIPT_ITEMS, "definitions": ITEM_DEFINITIONS,
+                                "calls": store.analysis_list()})
                 elif url.path == "/api/state":
                     self._json(state(me))
                 elif url.path == "/api/call":
@@ -178,8 +187,8 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
                         return self._json({"error": "unknown call"}, 404)
                     self._json(store.ai_analysis(cid) or {"none": True})
                 elif url.path == "/api/sentiment":
-                    # Local turn-level sentiment for this call, if `salud-sentiment run` has been run here.
-                    self._json(sentiment.for_call(cid) or {"none": True})
+                    # Turn-level sentiment for this call (salud-sentiment run or the Analyze page), if scored.
+                    self._json(store.sentiment(cid) or {"none": True})
                 elif url.path == "/brand/logo":
                     p = _logo_path()
                     if p is None:
@@ -192,7 +201,7 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
 
         def do_POST(self):
             path = urlparse(self.path).path
-            if path not in ("/api/label", "/api/login", "/api/logout"):
+            if path not in ("/api/label", "/api/login", "/api/logout", "/api/analyze/run", "/api/analyze/new"):
                 return self._json({"error": "not found"}, 404)
             if not self.headers.get("Content-Type", "").startswith("application/json"):
                 return self._json({"error": "expected JSON"}, 415)
@@ -207,6 +216,14 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
                 me = self._rater()
                 if me is None:
                     return self._json({"error": "sign in", "login": True}, 401)
+                if path == "/api/analyze/new":
+                    text = str(body.get("transcript", ""))
+                    if len(text) > live.MAX_TRANSCRIPT_CHARS:
+                        raise ValueError(f"the transcript is too long (max {live.MAX_TRANSCRIPT_CHARS:,} characters)")
+                    cid = store.add_new_call(text, me)
+                    return self._json({"id": cid} | live.analyze(store, cid))
+                if path == "/api/analyze/run":
+                    return self._json(live.analyze(store, str(body["id"])))
                 store.save_tag(me, body["id"], body["values"], body.get("llm"))
             except (ValueError, KeyError, json.JSONDecodeError) as e:
                 return self._json({"error": str(e)}, 400)

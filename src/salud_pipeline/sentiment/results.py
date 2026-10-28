@@ -1,92 +1,47 @@
-"""Score calls into two tables, save them locally, and read them back for the dashboard.
+"""Score calls and keep the results in the team database (phase1.turn_sentiment, phase1.call_sentiment).
 
-    reports/sentiment/turns.csv   one row per scored turn: call_id, turn, speaker, role, words, weight,
-                                  score, magnitude, label, p_negative, p_neutral, p_positive
-    reports/sentiment/calls.csv   one row per call: caller_* and agent_* summaries (aggregate.summarize)
-    reports/sentiment/meta.json   model, revision, when it ran
-
-Both CSVs hold numbers and labels only, never transcript text.
+score_call() is pure: transcript -> (turn rows, call summary). score_and_save() adds the database write, and is
+what both `salud-sentiment run` and the website's Analyze button use. Turn rows hold numbers and labels only,
+never transcript text.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import threading
-from datetime import datetime, timezone
-from pathlib import Path
-
 import pandas as pd
 
-from ..paths import SENTIMENT_REPORTS
 from ..phase1.prompt import split_turns
 from .aggregate import summarize
 from .turns import scorable_turns
 
 ROLES = ("caller", "agent")
-TURN_COLUMNS = ["call_id", "turn", "speaker", "role", "words", "weight", "score", "magnitude", "label",
-                "p_negative", "p_neutral", "p_positive"]
+
+
+def score_call(transcript: str, model) -> tuple[list[dict], dict]:
+    """model: anything with .score(list[str]) -> list[dict] (model.py). Returns (turn rows, summary)."""
+    turns = scorable_turns(transcript)
+    scores = model.score([t["text"] for t in turns]) if turns else []
+    rows = [{"turn": t["n"], "speaker": t["speaker"], "role": t["role"], "words": t["words"], "weight": t["weight"],
+             **{k: (round(v, 4) if isinstance(v, float) else v) for k, v in s.items()}}
+            for t, s in zip(turns, scores)]
+    total = len(split_turns(transcript))
+    summary = {"call_turns": total}
+    for role in ROLES:
+        s = summarize([dict(r, n=r["turn"]) for r in rows if r["role"] == role], total)
+        summary |= {f"{role}_{k}": v for k, v in s.items()}
+    return rows, summary
+
+
+def score_and_save(store, call_id: str, transcript: str, model, model_name: str) -> dict:
+    rows, summary = score_call(transcript, model)
+    store.save_sentiment(call_id, rows, summary, model_name)
+    return summary
 
 
 def score_calls(transcripts: dict[str, str], model) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """transcripts: call_id -> text. model: anything with .score(list[str]) -> list[dict] (model.py)."""
-    per_call = {cid: scorable_turns(text) for cid, text in transcripts.items()}
-    flat = [(cid, t) for cid, ts in per_call.items() for t in ts]
-    scores = model.score([t["text"] for _, t in flat]) if flat else []
-    rows = [{"call_id": cid, "turn": t["n"], "speaker": t["speaker"], "role": t["role"], "words": t["words"],
-             "weight": t["weight"], **s} for (cid, t), s in zip(flat, scores)]
-    turns = pd.DataFrame(rows, columns=TURN_COLUMNS)
-    calls = []
+    """Many calls at once, as tables (call_id on every row). Used for checks and exports."""
+    turns, calls = [], []
     for cid, text in transcripts.items():
-        mine = [r for r in rows if r["call_id"] == cid]
-        total = len(split_turns(text))
-        row = {"call_id": cid, "source": cid.split("/", 1)[0], "call_turns": total}
-        for role in ROLES:
-            s = summarize([dict(r, n=r["turn"]) for r in mine if r["role"] == role], total)
-            row |= {f"{role}_{k}": v for k, v in s.items()}
-        calls.append(row)
-    return turns, pd.DataFrame(calls)
-
-
-def save(turns: pd.DataFrame, calls: pd.DataFrame, meta: dict, out: Path = SENTIMENT_REPORTS) -> None:
-    out.mkdir(parents=True, exist_ok=True)
-    turns.round(4).to_csv(out / "turns.csv", index=False)
-    calls.to_csv(out / "calls.csv", index=False)
-    (out / "meta.json").write_text(json.dumps(meta | {"ran_at": datetime.now(timezone.utc).isoformat()}, indent=2))
-
-
-class Results:
-    """The saved results, reloaded whenever `salud-sentiment run` rewrites them. Empty if never run."""
-
-    def __init__(self, folder: Path = SENTIMENT_REPORTS):
-        self.folder = folder
-        self._stamp = None
-        self._lock = threading.Lock()
-        self._turns: dict[str, list[dict]] = {}
-        self._calls: dict[str, dict] = {}
-        self.meta: dict = {}
-
-    def _refresh(self) -> None:
-        files = [self.folder / n for n in ("turns.csv", "calls.csv")]
-        stamp = tuple(os.path.getmtime(f) if f.exists() else None for f in files)
-        if stamp == self._stamp:
-            return
-        self._stamp = stamp
-        self._turns, self._calls, self.meta = {}, {}, {}
-        if None in stamp:
-            return
-        turns, calls = pd.read_csv(files[0]), pd.read_csv(files[1])
-        for r in turns.to_dict("records"):
-            self._turns.setdefault(r["call_id"], []).append(
-                {k: r[k] for k in ("turn", "role", "score", "magnitude", "label")})
-        self._calls = {r["call_id"]: {k: (None if pd.isna(v) else v) for k, v in r.items()}
-                       for r in calls.to_dict("records")}
-        meta = self.folder / "meta.json"
-        self.meta = json.loads(meta.read_text()) if meta.exists() else {}
-
-    def for_call(self, call_id: str) -> dict | None:
-        with self._lock:
-            self._refresh()
-            if call_id not in self._calls:
-                return None
-            return {"model": self.meta.get("model"), "call": self._calls[call_id], "turns": self._turns.get(call_id, [])}
+        rows, summary = score_call(text, model)
+        turns += [{"call_id": cid} | r for r in rows]
+        calls.append({"call_id": cid, "source": cid.split("/", 1)[0]} | summary)
+    return pd.DataFrame(turns), pd.DataFrame(calls)

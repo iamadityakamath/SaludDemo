@@ -1,7 +1,7 @@
 """Every project location in one place.
 
 Client-provided folders keep the names Salud sent them under. Everything the project generates lives
-under data/phase1, data/phase2, reports/phase1 and reports/sentiment, all gitignored.
+under data/phase1, data/phase2 and reports/phase1, all gitignored.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ PHASE1_REPORTS = REPO_ROOT / "reports" / "phase1"
 LLM_CACHE = PHASE1_REPORTS / "llm_cache"                       # local cache: one file per analyzed transcript
 AI_ANALYSES = PHASE1_REPORTS / "ai_analyses.json"              # pre-Neon analyses, imported by salud-db setup
 COMPARISON = PHASE1_REPORTS / "comparison"                     # compare output (local Excel/CSV)
-SENTIMENT_REPORTS = REPO_ROOT / "reports" / "sentiment"         # turn-level sentiment (local, salud-sentiment run)
+AI_VERSIONS = PHASE1_REPORTS / "ai_versions"                   # trial runs: <prompt version>.json + comparison
 
 # Phase 2: propensity
 PHASE2_DATA = DATA / "phase2"

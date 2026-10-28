@@ -3,3 +3,6 @@ numpy>=1.26
 pandas>=2.1
 psycopg[binary]>=3.2
 psycopg-pool>=3.2
+# Live sentiment on /analyze (int8 ONNX model, downloaded to /tmp on first use)
+onnxruntime>=1.20
+tokenizers>=0.20

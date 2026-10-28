@@ -209,6 +209,8 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; border: 1px solid v
   border-radius: 8px; padding: 9px 10px; font: inherit; }
 .login .err { color: var(--no); font-size: 13px; min-height: 1.2em; }
 .login img { height: 40px; justify-self: start; }
+.navlink { color: var(--accent); font-size: 12px; font-weight: 650; text-decoration: none; white-space: nowrap; }
+.navlink:hover { text-decoration: underline; }
 #signout { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
 #signout[hidden] { display: none; }
 
@@ -271,6 +273,7 @@ kbd { font-family: ui-monospace, monospace; font-size: 11px; border: 1px solid v
     <span class="spacer"></span>
     <span class="chip" id="aichip"><span class="pulse"></span><span id="aitext">AI</span></span>
     <span class="chip" id="rater"></span>
+    <a class="navlink" href="/analyze">Agent dashboard →</a>
     <button type="button" id="signout" hidden>Sign out</button>
     <span class="status keys"><kbd>⌘S</kbd> save · <kbd>Alt</kbd><kbd>↑↓</kbd> calls</span>
   </header>
@@ -375,7 +378,9 @@ function showLogin() {
       $("login-help").textContent = "Who's tagging?"; $("login-name").focus();
       return;
     }
-    location.reload();
+    // Signed in: go back to the agent dashboard if that's where the sign-in started.
+    if (new URLSearchParams(location.search).get("next") === "analyze") location.assign("/analyze");
+    else location.reload();
   };
 }
 $("signout").onclick = () => guard(async () => {

@@ -1,10 +1,11 @@
 """salud-sentiment: turn-level call sentiment, run locally.
 
-    salud-sentiment run [--source real|synthetic]   score calls from the team database -> reports/sentiment/
-    salud-sentiment eval                            call labels vs planted labels, raters' tags, the LLM's label
+    salud-sentiment run [--source real|synthetic|new] [--redo]   score calls not scored yet -> team database
+    salud-sentiment eval                                         call labels vs planted labels, raters' tags, the LLM
 
-Both commands only read the team database (DATABASE_URL in .env). Transcripts are scored on this machine and
-never printed; the outputs hold numbers and labels only.
+`run` reads transcripts from the team database (DATABASE_URL in .env), scores them on this machine and writes
+phase1.turn_sentiment / phase1.call_sentiment (numbers and labels only). `eval` only reads. Transcripts are
+never printed.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ import time
 
 import pandas as pd
 
-from ..paths import SENTIMENT_REPORTS
 from . import aggregate
 from .aggregate import as_tag
 
@@ -27,28 +27,28 @@ def _store():
 
 
 def cmd_run(args) -> None:
-    from .model import MODEL_ID, REVISION, SentimentModel
-    from .results import save, score_calls
+    from .model import MODEL_NAME, SentimentModel
+    from .results import score_and_save
 
     store = _store()
-    calls = [c for c in store.calls() if not args.source or c["source"] == args.source]
-    if not calls:
-        sys.exit("No calls to score: the team database has none" + (f" from '{args.source}'." if args.source else "."))
-    transcripts = {c["call_id"]: store.transcript(c["call_id"]) or "" for c in calls}
-    print(f"Loading {MODEL_ID} (first run downloads ~500 MB)…")
+    calls = [c for c in store.calls(include_new=True) if not args.source or c["source"] == args.source]
+    done = set() if args.redo else set(store.sentiment_summaries())
+    todo = [c for c in calls if c["call_id"] not in done]
+    if not todo:
+        print(f"All {len(calls)} calls are already scored. Use --redo to score them again.")
+        return
+    print(f"Loading {MODEL_NAME} (first run downloads ~130 MB)…")
     model = SentimentModel()
     t0 = time.time()
-    turns, summary = score_calls(transcripts, model)
-    save(turns, summary, {"model": MODEL_ID, "revision": REVISION, "device": model.device,
-                          "source": args.source or "all", "calls": len(calls), "turns": len(turns)})
-    print(f"Scored {len(turns)} turns in {len(calls)} calls on {model.device} in {time.time() - t0:.0f}s "
-          f"-> {SENTIMENT_REPORTS}/")
+    for c in todo:
+        score_and_save(store, c["call_id"], store.transcript(c["call_id"]) or "", model, MODEL_NAME)
+    print(f"Scored {len(todo)} calls in {time.time() - t0:.0f}s -> team database "
+          f"(phase1.turn_sentiment, phase1.call_sentiment); {len(calls) - len(todo)} were already scored.")
+    summary = pd.DataFrame(store.sentiment_summaries().values())
     for role in ("caller", "agent"):
-        col = summary[f"{role}_label"].value_counts().reindex(aggregate.LABELS, fill_value=0)
-        print(f"  {role} call labels: " + ", ".join(f"{k} {v}" for k, v in col.items()))
-    if "caller_shift" in summary:
-        print(f"  caller shift (end - start): mean {summary['caller_shift'].mean():+.2f}, "
-              f"improved {(summary['caller_shift'] > 0.1).sum()}, worsened {(summary['caller_shift'] < -0.1).sum()}")
+        if f"{role}_label" in summary:
+            col = summary[f"{role}_label"].value_counts().reindex(aggregate.LABELS, fill_value=0)
+            print(f"  {role} call labels: " + ", ".join(f"{k} {v}" for k, v in col.items()))
 
 
 def _agreement(pred: pd.Series, truth: pd.Series) -> str:
@@ -65,11 +65,12 @@ def _confusion(pred: pd.Series, truth: pd.Series) -> pd.DataFrame:
 
 
 def cmd_eval(args) -> None:
-    calls_csv = SENTIMENT_REPORTS / "calls.csv"
-    if not calls_csv.exists():
-        sys.exit("No results yet. Run `salud-sentiment run` first.")
-    calls = pd.read_csv(calls_csv).set_index("call_id")
     store = _store()
+    scored = store.sentiment_summaries()
+    if not scored:
+        sys.exit("No results yet. Run `salud-sentiment run` first.")
+    calls = pd.DataFrame.from_dict(scored, orient="index")
+    calls = calls[~calls.index.str.startswith("new/")]   # pasted calls have no references
     truths = {}
     planted = store.planted().set_index("call_id")
     if "sentiment" in planted:
@@ -116,8 +117,9 @@ def cmd_eval(args) -> None:
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(prog="salud-sentiment", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    r = sub.add_parser("run", help="score every call's turns locally -> reports/sentiment/")
-    r.add_argument("--source", choices=["real", "synthetic"], help="only these calls (default: all)")
+    r = sub.add_parser("run", help="score calls not scored yet, locally -> team database")
+    r.add_argument("--source", choices=["real", "synthetic", "new"], help="only these calls (default: all)")
+    r.add_argument("--redo", action="store_true", help="score already-scored calls again")
     r.set_defaults(func=cmd_run)
     e = sub.add_parser("eval", help="call labels vs planted labels, raters' tags and the LLM's label")
     e.add_argument("--detail", action="store_true", help="also print confusion tables")

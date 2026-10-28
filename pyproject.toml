@@ -13,8 +13,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
-# Turn-level call sentiment (salud-sentiment). Not in requirements.txt: the Vercel site doesn't run the model.
-sentiment = ["transformers>=4.44", "torch>=2.3"]
+# Turn-level call sentiment (salud-sentiment): the int8 ONNX model. Also in requirements.txt (the website's live Analyze).
+sentiment = ["onnxruntime>=1.20", "tokenizers>=0.20"]
 
 [project.scripts]
 salud-phase1 = "salud_pipeline.phase1.cli:main"

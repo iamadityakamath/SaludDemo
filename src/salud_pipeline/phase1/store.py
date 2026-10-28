@@ -7,11 +7,15 @@ data from their own laptop. Connection: DATABASE_URL (pooled) from .env.
 Rules the database code enforces:
 - AI analyses are only ever added, never changed (insert ... on conflict do nothing).
 - A rater's tag for a call is one row; saving again replaces that rater's own row only.
+- Calls pasted on the /analyze page (source 'new') stay out of tagging, assignments and comparisons:
+  calls(), ai_info() and ai_analyses() leave them out unless asked.
 """
 
 from __future__ import annotations
 
 import os
+import uuid
+from datetime import datetime, timezone
 
 import pandas as pd
 from psycopg.rows import dict_row
@@ -49,9 +53,32 @@ class Store:
             return c.execute(sql, params).fetchall()
 
     # ---- calls ----
-    def calls(self) -> list[dict]:
-        return self._all("SELECT call_id, source, file_id FROM phase1.calls "
+    def calls(self, include_new: bool = False) -> list[dict]:
+        where = "" if include_new else "WHERE source <> 'new' "
+        return self._all("SELECT call_id, source, file_id FROM phase1.calls " + where +
                          "ORDER BY source = 'synthetic', file_id")
+
+    def analysis_list(self) -> list[dict]:
+        """Every call for the /analyze page, newest pasted calls first, with what has been computed for it."""
+        return self._all(
+            "SELECT c.call_id, c.source, c.file_id, c.added_by, c.added_at, "
+            "a.call_id IS NOT NULL AS analyzed, s.call_id IS NOT NULL AS scored, "
+            "s.summary->>'caller_end_label' AS end_label "
+            "FROM phase1.calls c LEFT JOIN phase1.ai_analyses a USING (call_id) "
+            "LEFT JOIN phase1.call_sentiment s USING (call_id) "
+            "ORDER BY c.source = 'new' DESC, c.added_at DESC NULLS LAST, c.source = 'synthetic', c.file_id")
+
+    def add_new_call(self, transcript: str, added_by: str) -> str:
+        """Save a transcript pasted on /analyze as call 'new/<time>-<id>'. Returns its call_id."""
+        if not transcript.strip():
+            raise ValueError("the transcript is empty")
+        now = datetime.now(timezone.utc)
+        file_id = f"{now:%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
+        with self.pool.connection() as c:
+            c.execute("INSERT INTO phase1.calls (call_id, source, file_id, transcript, added_by, added_at) "
+                      "VALUES (%s, 'new', %s, %s, %s, %s)",
+                      (f"new/{file_id}", file_id, transcript.strip(), added_by[:100], now))
+        return f"new/{file_id}"
 
     def transcript(self, call_id: str) -> str | None:
         rows = self._all("SELECT transcript FROM phase1.calls WHERE call_id = %s", (call_id,))
@@ -65,7 +92,8 @@ class Store:
     # ---- AI analyses ----
     def ai_info(self) -> dict:
         r = self._all("SELECT count(*) AS analyzed, min(model) AS model, max(model) AS model_max, "
-                      "min(prompt_version) AS prompt_version, max(prompt_version) AS pv_max FROM phase1.ai_analyses")[0]
+                      "min(prompt_version) AS prompt_version, max(prompt_version) AS pv_max FROM phase1.ai_analyses "
+                      "WHERE NOT starts_with(call_id, 'new/')")[0]
         return {"analyzed": r["analyzed"], "model": r["model"], "prompt_version": r["prompt_version"],
                 "mixed": (r["model"] != r["model_max"]) or (r["prompt_version"] != r["pv_max"])}
 
@@ -74,7 +102,8 @@ class Store:
         return rows[0]["raw"] if rows else None
 
     def ai_analyses(self) -> dict[str, dict]:
-        return {r["call_id"]: r["raw"] for r in self._all("SELECT call_id, raw FROM phase1.ai_analyses")}
+        return {r["call_id"]: r["raw"] for r in self._all("SELECT call_id, raw FROM phase1.ai_analyses "
+                                                          "WHERE NOT starts_with(call_id, 'new/')")}
 
     def add_ai_analysis(self, call_id: str, analysis: dict, model: str, prompt_version: str) -> bool:
         """Insert one analysis with its checklist and coaching rows. Returns False if one already exists."""
@@ -103,6 +132,34 @@ class Store:
                 c.execute("INSERT INTO phase1.ai_coaching (call_id, tip_no, item, tip, turn) VALUES (%s,%s,%s,%s,%s)",
                           (call_id, i, t.get("item"), t.get("tip"), t.get("turn")))
         return True
+
+    # ---- turn-level sentiment (salud-sentiment) ----
+    def save_sentiment(self, call_id: str, turns: list[dict], summary: dict, model: str) -> None:
+        """Replace one call's turn scores and summary (a rescore overwrites the old one)."""
+        cols = ["turn", "speaker", "role", "words", "weight", "score", "magnitude", "label",
+                "p_negative", "p_neutral", "p_positive"]
+        with self.pool.connection() as c, c.transaction():
+            c.execute("DELETE FROM phase1.turn_sentiment WHERE call_id = %s", (call_id,))
+            with c.cursor() as cur:
+                cur.executemany(f"INSERT INTO phase1.turn_sentiment (call_id, {', '.join(cols)}) "
+                                f"VALUES (%s, {', '.join(['%s'] * len(cols))})",
+                                [[call_id] + [t[k] for k in cols] for t in turns])
+            c.execute("INSERT INTO phase1.call_sentiment (call_id, model, summary) VALUES (%s, %s, %s) "
+                      "ON CONFLICT (call_id) DO UPDATE SET model = EXCLUDED.model, summary = EXCLUDED.summary, "
+                      "scored_at = now()", (call_id, model, Jsonb(summary)))
+
+    def sentiment(self, call_id: str) -> dict | None:
+        """{'model', 'call': summary, 'turns': [{turn, role, score, magnitude, label}]}, or None if never scored."""
+        head = self._all("SELECT model, summary FROM phase1.call_sentiment WHERE call_id = %s", (call_id,))
+        if not head:
+            return None
+        turns = self._all("SELECT turn, role, score, magnitude, label FROM phase1.turn_sentiment "
+                          "WHERE call_id = %s ORDER BY turn", (call_id,))
+        return {"model": head[0]["model"], "call": head[0]["summary"], "turns": turns}
+
+    def sentiment_summaries(self) -> dict[str, dict]:
+        """call_id -> summary, for every scored call."""
+        return {r["call_id"]: r["summary"] for r in self._all("SELECT call_id, summary FROM phase1.call_sentiment")}
 
     # ---- reviewed tags ----
     def tags(self, rater: str | None = None) -> pd.DataFrame:

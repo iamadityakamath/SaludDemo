@@ -1,20 +1,58 @@
-"""cardiffnlp/twitter-roberta-base-sentiment-latest, run locally.
+"""cardiffnlp/twitter-roberta-base-sentiment-latest, as an int8 ONNX model, run locally.
+
+The same model runs on a laptop (salud-sentiment run) and on the team website (live Analyze), so a call's
+scores don't depend on where it was scored. The int8 ONNX copy (Xenova's conversion, 126 MB) needs only
+onnxruntime + tokenizers (~80 MB), small enough for a Vercel function; PyTorch would not fit.
 
 The model gives P(negative), P(neutral), P(positive) per text (softmax, they sum to 1). We report
     score     = P(positive) - P(negative)   in [-1, 1]
     magnitude = 1 - P(neutral)              in [0, 1]
     label     = the most likely class
-The revision is pinned so a rerun gives the same numbers. The first run downloads ~500 MB to the
-Hugging Face cache (~/.cache/huggingface); after that it runs offline.
+The files are pinned to one revision and downloaded once to MODEL_CACHE (on Vercel: /tmp, per instance).
 """
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
+import threading
+import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 
 MODEL_ID = "cardiffnlp/twitter-roberta-base-sentiment-latest"
-REVISION = "3216a57f2a0d9c45a2e6c20157c20c49fb4bf9c7"   # main as of 2025-08-04
+ONNX_REPO = "Xenova/twitter-roberta-base-sentiment-latest"
+REVISION = "f3ec4d0925f90c3ca7ee7814f52d6ee7cf180445"   # main as of 2026-10
+FILES = ["config.json", "tokenizer.json", "onnx/model_quantized.onnx"]
+MODEL_NAME = f"{MODEL_ID} (int8 onnx)"
 MAX_TOKENS = 512
+PAD_ID = 1   # RoBERTa <pad>
+
+
+def _cache_dir() -> Path:
+    if os.environ.get("SALUD_MODEL_CACHE"):
+        return Path(os.environ["SALUD_MODEL_CACHE"])
+    if os.environ.get("VERCEL"):
+        return Path(tempfile.gettempdir()) / "salud-sentiment"
+    return Path.home() / ".cache" / "salud-sentiment"
+
+
+def download(folder: Path | None = None) -> Path:
+    """The pinned model files, downloaded on first use. Returns their folder."""
+    folder = (folder or _cache_dir()) / REVISION[:12]
+    for name in FILES:
+        dest = folder / name
+        if dest.exists():
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        url = f"https://huggingface.co/{ONNX_REPO}/resolve/{REVISION}/{name}"
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        with urllib.request.urlopen(url, timeout=120) as r, open(tmp, "wb") as f:
+            while chunk := r.read(1 << 20):
+                f.write(chunk)
+        tmp.replace(dest)   # only complete files get the real name
+    return folder
 
 
 def from_probs(neg: float, neu: float, pos: float) -> dict:
@@ -25,35 +63,52 @@ def from_probs(neg: float, neu: float, pos: float) -> dict:
 
 @dataclass
 class SentimentModel:
-    model_id: str = MODEL_ID
-    revision: str = REVISION
-    batch_size: int = 32
-    device: str | None = None   # None: Apple GPU (mps) or CUDA when available, else CPU
+    batch_size: int = 16
+    device: str = "cpu"
 
     def __post_init__(self):
         try:
-            import torch
-            from transformers import AutoModelForSequenceClassification, AutoTokenizer
-            from transformers.utils import logging as hf_logging
+            import numpy as np
+            import onnxruntime as ort
+            from tokenizers import Tokenizer
         except ImportError:
             raise SystemExit("Sentiment needs the optional install: pip install -e '.[sentiment]'") from None
-        hf_logging.set_verbosity_error()   # the unused pooler weights trigger a harmless load report
-        self._torch = torch
-        if self.device is None:
-            self.device = ("cuda" if torch.cuda.is_available()
-                           else "mps" if torch.backends.mps.is_available() else "cpu")
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, revision=self.revision)
-        self.model = AutoModelForSequenceClassification.from_pretrained(self.model_id, revision=self.revision)
-        self.model.to(self.device).eval()
-        labels = {v.lower(): int(k) for k, v in self.model.config.id2label.items()}
+        self._np = np
+        folder = download()
+        self.tokenizer = Tokenizer.from_file(str(folder / "tokenizer.json"))
+        self.tokenizer.enable_truncation(MAX_TOKENS)
+        self.tokenizer.enable_padding(pad_id=PAD_ID, pad_token="<pad>")
+        opts = ort.SessionOptions()
+        opts.log_severity_level = 3
+        self.session = ort.InferenceSession(str(folder / "onnx/model_quantized.onnx"), opts,
+                                            providers=["CPUExecutionProvider"])
+        self._inputs = {i.name for i in self.session.get_inputs()}
+        labels = {v.lower(): int(k) for k, v in json.loads((folder / "config.json").read_text())["id2label"].items()}
         self._idx = [labels["negative"], labels["neutral"], labels["positive"]]
 
     def score(self, texts: list[str]) -> list[dict]:
-        out = []
+        np, out = self._np, []
         for i in range(0, len(texts), self.batch_size):
-            batch = self.tokenizer(texts[i:i + self.batch_size], padding=True, truncation=True,
-                                   max_length=MAX_TOKENS, return_tensors="pt").to(self.device)
-            with self._torch.no_grad():
-                probs = self._torch.softmax(self.model(**batch).logits.float(), dim=-1).cpu().tolist()
-            out += [from_probs(*(p[j] for j in self._idx)) for p in probs]
+            enc = self.tokenizer.encode_batch(texts[i:i + self.batch_size])
+            feed = {"input_ids": np.array([e.ids for e in enc], dtype=np.int64),
+                    "attention_mask": np.array([e.attention_mask for e in enc], dtype=np.int64)}
+            if "token_type_ids" in self._inputs:
+                feed["token_type_ids"] = np.zeros_like(feed["input_ids"])
+            logits = self.session.run(None, {k: v for k, v in feed.items() if k in self._inputs})[0]
+            probs = np.exp(logits - logits.max(axis=1, keepdims=True))
+            probs /= probs.sum(axis=1, keepdims=True)
+            out += [from_probs(*(float(p[j]) for j in self._idx)) for p in probs]
         return out
+
+
+_shared: SentimentModel | None = None
+_shared_lock = threading.Lock()
+
+
+def shared_model() -> SentimentModel:
+    """One model per process (the website loads it on the first Analyze, then reuses it)."""
+    global _shared
+    with _shared_lock:
+        if _shared is None:
+            _shared = SentimentModel()
+        return _shared
