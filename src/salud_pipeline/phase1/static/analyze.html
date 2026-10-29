@@ -58,6 +58,11 @@ nav { border-right: 1px solid var(--line); display: grid; grid-template-rows: au
 .sdot { width: 9px; height: 9px; border-radius: 50%; flex: none; margin-left: auto; background: var(--line); }
 .sdot.negative { background: var(--neg); } .sdot.positive { background: var(--pos); }
 .sdot.neutral, .sdot.mixed { background: var(--brand-grey); }
+.rowspin { width: 12px; height: 12px; flex: none; margin-left: auto; border-radius: 50%; border: 2px solid var(--brand-grey);
+  border-right-color: transparent; animation: spin .7s linear infinite; }
+.rowwarn { width: 14px; height: 14px; flex: none; margin-left: auto; border-radius: 50%; background: var(--warn-soft);
+  color: var(--warn); font-size: 10px; font-weight: 800; display: grid; place-items: center; }
+dialog input[type=file] { display: block; margin: 0 0 10px; font-size: 13px; }
 
 .btn { border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 8px 14px; cursor: pointer; white-space: nowrap; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 650; }
@@ -186,22 +191,21 @@ dialog .warn { font-size: 12px; color: var(--warn); }
   <div class="body">
     <nav>
       <div class="navtop">
-        <button type="button" class="btn primary" id="newbtn">+ Analyze a new call</button>
+        <button type="button" class="btn primary" id="newbtn">+ Upload calls</button>
         <input id="search" type="search" placeholder="Search calls…" aria-label="Search calls">
       </div>
       <div id="list"></div>
     </nav>
     <section class="center">
       <div class="toolbar">
-        <button type="button" class="btn primary big" id="analyze" disabled>Analyze</button>
-        <button type="button" class="btn" id="reanalyze" hidden title="Score sentiment and run the AI review again, replacing the stored results">↻ Re-analyze</button>
+        <button type="button" class="btn" id="reanalyze" disabled title="Score sentiment and run the AI review again, replacing the stored results">↻ Re-analyze</button>
         <span class="fid" id="callid">Pick a call on the left</span>
         <span class="status" id="status"></span>
       </div>
       <div id="top"><div id="kpis"></div><div id="senti"></div></div>
-      <div id="scroll"><div id="notes"></div><div id="summary"></div><div id="turns"><div class="empty">Pick a call, or paste a new one, then click <b>Analyze</b>.</div></div></div>
+      <div id="scroll"><div id="notes"></div><div id="summary"></div><div id="turns"><div class="empty">Pick a call on the left, or paste a new one.</div></div></div>
     </section>
-    <aside id="results"><div class="empty">Results appear here after <b>Analyze</b>: the QA checklist, call outcome and coaching tips.</div></aside>
+    <aside id="results"><div class="empty">Pick a call to see its QA checklist, call outcome and coaching tips.</div></aside>
   </div>
 </div>
 
@@ -229,19 +233,21 @@ dialog .warn { font-size: 12px; color: var(--warn); }
 
 <dialog id="newdlg">
   <form method="dialog" id="newform">
-    <h3>Analyze a new call</h3>
-    <p>Paste the transcript with one turn per paragraph, each starting with the speaker, e.g. <code>Agent: …</code> then a blank line, then <code>Patient: …</code>.</p>
-    <textarea id="newtext" placeholder="Agent: Thank you for calling, how can I help?&#10;&#10;Patient: Hi, I have a question about my bill." required></textarea>
+    <h3>Upload calls</h3>
+    <p>Choose one or more <code>.txt</code> transcripts, or paste one below. Each is saved to the team database and analyzed straight away.
+      One turn per paragraph, each starting with the speaker, e.g. <code>Agent: …</code> then a blank line, then <code>Patient: …</code>.</p>
+    <input type="file" id="newfiles" accept=".txt,text/plain" multiple aria-label="Transcript files">
+    <textarea id="newtext" placeholder="Agent: Thank you for calling, how can I help?&#10;&#10;Patient: Hi, I have a question about my bill."></textarea>
     <div class="warn" id="newwarn"></div>
     <div class="row"><span id="new-err"></span>
       <span><button type="button" class="btn" id="newcancel">Cancel</button>
-      <button type="submit" class="btn primary" id="newgo">Analyze</button></span></div>
+      <button type="submit" class="btn primary" id="newgo">Upload</button></span></div>
   </form>
 </dialog>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const S = { calls: [], byId: {}, cur: null, text: {}, res: {}, q: "", cfg: {} };
+const S = { calls: [], byId: {}, cur: null, text: {}, res: {}, q: "", cfg: {}, busy: new Set(), tried: new Set(), failed: new Set(), poll: 0 };
 const LABEL = {
   greeting: "Appropriate greeting", culture: "Culture & values", capturing_data: "Captures key data",
   understanding_needs: "Understands needs", correct_info: "Correct information",
@@ -288,6 +294,11 @@ function showLogin() {
 }
 
 /* ---------- call list ---------- */
+// A call's state: "processing" (being analyzed, here or anywhere: the server's call_status), "incomplete"
+// (missing a part; opening it retries) or "done".
+const state = (c) => S.busy.has(c.call_id) ? "processing" : S.failed.has(c.call_id) ? "incomplete" : c.status;
+const missing = (r) => !r || r.sentiment.none || (r.analysis.none && S.cfg.llm);
+
 async function loadList(select) {
   const d = await api("/api/analyze/list");
   S.cfg = d; S.calls = d.calls; S.byId = Object.fromEntries(d.calls.map((c) => [c.call_id, c]));
@@ -297,23 +308,32 @@ async function loadList(select) {
   chip.textContent = "AI review off: sentiment only for new calls";
   chip.title = "No LLM API key is configured on this server, so new calls get sentiment but no AI checklist.";
   renderList();
+  // While any call is processing, check again in a few seconds; the open call refreshes once it's done.
+  clearTimeout(S.poll);
+  if (S.calls.some((c) => state(c) === "processing")) S.poll = setTimeout(() => loadList().catch(() => {}), 4000);
+  const cur = S.byId[S.cur];
+  if (!select && cur && state(cur) === "done" && missing(S.res[S.cur])) refresh(S.cur);
   if (select) show(select);
 }
 
 function renderList() {
   const q = S.q.toLowerCase();
-  const groups = [["new", "Your analyzed calls"], ["real", "Real calls"], ["synthetic", "Synthetic calls"]];
+  const groups = [["new", "Uploaded calls"], ["real", "Real calls"], ["synthetic", "Synthetic calls"]];
   let html = "";
   for (const [src, title] of groups) {
     const rows = S.calls.filter((c) => c.source === src && (!q || c.file_id.toLowerCase().includes(q)));
     if (!rows.length) continue;
     html += `<div class="grp">${title} · ${rows.length}</div>` + rows.map((c) => {
       const when = c.added_at ? new Date(c.added_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+      const st = state(c);
+      const mark = st === "processing" ? `<span class="rowspin" title="Processing: sentiment and AI review"></span>`
+        : st === "incomplete" ? `<span class="rowwarn" title="Not fully analyzed yet. Open the call to finish it.">!</span>`
+        : `<span class="sdot ${esc(c.end_label || "")}" title="${c.end_label ? "Customer ended " + esc(c.end_label) : "Analyzed"}"></span>`;
       return `<button type="button" data-id="${esc(c.call_id)}" aria-current="${c.call_id === S.cur}">
         <span class="src ${esc(c.source)}">${esc(c.source)}</span>
         <span style="min-width:0"><div class="fid">${esc(c.source === "new" ? when : c.file_id)}</div>
-        ${c.source === "new" && c.added_by ? `<div class="meta">by ${esc(cap(c.added_by))}</div>` : ""}</span>
-        <span class="sdot ${esc(c.end_label || "")}" title="${c.end_label ? "Customer ended " + esc(c.end_label) : "Not analyzed yet"}"></span></button>`;
+        ${c.source === "new" ? `<div class="meta">${st === "processing" ? "Processing…" : c.added_by ? "by " + esc(cap(c.added_by)) : ""}</div>` : ""}</span>
+        ${mark}</button>`;
     }).join("");
   }
   $("list").innerHTML = html || `<div class="empty">No calls match.</div>`;
@@ -322,21 +342,38 @@ function renderList() {
 $("search").oninput = (e) => { S.q = e.target.value; renderList(); };
 
 /* ---------- one call ---------- */
+function showStatus(id) {
+  if (S.cur !== id) return;
+  const c = S.byId[id], busy = c && state(c) === "processing";
+  $("reanalyze").disabled = busy || !S.text[id];
+  if (busy) $("status").innerHTML = `<span class="spin"></span>Processing: results appear here automatically`;
+}
+
 async function show(id) {
   S.cur = id; renderList();
   const c = S.byId[id];
-  $("callid").textContent = c ? (c.source === "new" ? `New call · ${c.file_id}` : c.file_id) : id;
-  $("analyze").disabled = false; $("status").textContent = "";
-  $("reanalyze").hidden = !S.res[id];
-  renderResults();
-  if (!S.text[id]) {
-    $("turns").innerHTML = `<div class="empty">Loading transcript…</div>`;
-    try { S.text[id] = await api("/api/call?id=" + encodeURIComponent(id)); }
-    catch (e) { $("turns").innerHTML = `<div class="empty">Couldn't load this call: ${esc(e.message)}</div>`; return; }
-    if (S.cur !== id) return;
-  }
+  $("callid").textContent = c ? (c.source === "new" ? `Uploaded call · ${c.file_id}` : c.file_id) : id;
+  $("status").textContent = ""; $("reanalyze").disabled = true;
+  renderResults(); showStatus(id);
+  if (!S.text[id]) $("turns").innerHTML = `<div class="empty">Loading transcript…</div>`;
+  const q = "?id=" + encodeURIComponent(id);
+  try {
+    // Stored results come straight from the database; nothing is computed here.
+    const [t, r] = await Promise.all([S.text[id] || api("/api/call" + q), missing(S.res[id]) ? api("/api/result" + q) : S.res[id]]);
+    S.text[id] = t; if (!S.busy.has(id)) S.res[id] = r;
+  } catch (e) { if (S.cur === id) $("turns").innerHTML = `<div class="empty">Couldn't load this call: ${esc(e.message)}</div>`; return; }
+  if (S.cur !== id) return;
   $("scroll").scrollTop = 0;
-  renderTranscript(); renderResults();
+  renderTranscript(); renderResults(); showStatus(id);
+  // A part still missing on a call nobody is processing (e.g. the AI provider was down): finish it now, once per
+  // page visit, so a failing provider isn't retried on every click.
+  const cur = S.byId[id];
+  if (cur && state(cur) === "incomplete" && missing(S.res[id]) && !S.tried.has(id)) run(id, false);
+}
+
+async function refresh(id) {   // a call finished processing elsewhere: load its stored results
+  try { S.res[id] = await api("/api/result?id=" + encodeURIComponent(id)); } catch (e) { return; }
+  if (S.cur === id) { $("status").textContent = ""; renderTranscript(); renderResults(); showStatus(id); }
 }
 
 // An in-page dialog rather than window.confirm(), which some embedded browsers block (it then returns false
@@ -350,27 +387,31 @@ function confirmRedo() {
   });
 }
 
-async function analyze(redo) {
-  const id = S.cur; if (!id) return;
-  const c = S.byId[id];
-  if (redo && c && c.source !== "new" && !(await confirmRedo())) return;
-  const btn = redo ? $("reanalyze") : $("analyze"), label = btn.innerHTML;
-  $("analyze").disabled = $("reanalyze").disabled = true;
-  btn.innerHTML = `<span class="spin"></span>${redo ? "Re-analyzing…" : "Analyzing…"}`;
-  $("status").textContent = redo || !(c?.analyzed && c?.scored) ? "This can take up to 30 seconds" : "";
-  try {
-    S.res[id] = await api("/api/analyze/run", { id, redo: !!redo });
-    await loadList();
-  } catch (e) { $("status").textContent = (redo ? "Re-analyze" : "Analyze") + " failed: " + e.message; btn.innerHTML = label;
-    $("analyze").disabled = $("reanalyze").disabled = false; return; }
-  btn.innerHTML = label; $("analyze").disabled = $("reanalyze").disabled = false;
+// Analyze one call and save the results. redo false: fill in only what's missing (uploads, incomplete calls).
+// redo true: the Re-analyze button, which replaces both stored parts.
+async function run(id, redo) {
+  S.busy.add(id); S.tried.add(id); S.failed.delete(id); renderList();
+  const btn = $("reanalyze");
   if (S.cur === id) {
-    $("status").textContent = redo ? "Re-analyzed just now" : "";
-    $("reanalyze").hidden = false; renderTranscript(); renderResults();
+    btn.disabled = true; if (redo) btn.innerHTML = `<span class="spin"></span>Re-analyzing…`;
+    $("status").innerHTML = `<span class="spin"></span>${redo ? "Re-analyzing" : "Processing"}: this can take up to 30 seconds`;
   }
+  let err = null;
+  try { S.res[id] = await api("/api/analyze/run", { id, redo: !!redo }); } catch (e) { err = e; }
+  S.busy.delete(id);
+  if (err || missing(S.res[id])) S.failed.add(id);
+  await loadList().catch(() => {});
+  if (S.cur !== id) return;
+  btn.innerHTML = "↻ Re-analyze"; showStatus(id);
+  if (err) { $("status").textContent = (redo ? "Re-analyze" : "Analysis") + " failed: " + err.message; return; }
+  $("status").textContent = redo ? "Re-analyzed just now" : "";
+  renderTranscript(); renderResults();
 }
-$("analyze").onclick = () => analyze(false);
-$("reanalyze").onclick = () => analyze(true);
+$("reanalyze").onclick = async () => {
+  const id = S.cur, c = S.byId[id]; if (!id) return;
+  if (c && c.source !== "new" && !(await confirmRedo())) return;
+  run(id, true);
+};
 
 
 function renderTranscript() {
@@ -405,8 +446,10 @@ function renderResults() {
   const r = S.res[S.cur];
   if (!r) {
     $("kpis").innerHTML = ""; $("senti").innerHTML = ""; $("notes").innerHTML = ""; $("summary").innerHTML = "";
-    $("results").innerHTML = `<div class="empty">${S.cur ? "Click <b>Analyze</b> to see this call's sentiment, QA checklist, outcome and coaching tips."
-      : "Results appear here after <b>Analyze</b>."}</div>`;
+    const c = S.byId[S.cur];
+    $("results").innerHTML = `<div class="empty">${c && state(c) === "processing" ? `<span class="spin"></span>Processing: the QA checklist, outcome and coaching tips appear here when they're ready.`
+      : S.cur ? "Loading this call's results…"
+      : "Pick a call to see its QA checklist, call outcome and coaching tips."}</div>`;
     return;
   }
   const a = r.analysis && !r.analysis.none ? r.analysis : null, sd = r.sentiment && !r.sentiment.none ? r.sentiment : null;
@@ -468,25 +511,28 @@ function renderSentiment(d) {
 }
 window.addEventListener("resize", () => { clearTimeout(window._rt); window._rt = setTimeout(() => { const r = S.res[S.cur]; if (r) renderSentiment(r.sentiment && !r.sentiment.none ? r.sentiment : null); }, 120); });
 
-/* ---------- new call ---------- */
+/* ---------- upload ---------- */
 $("newbtn").onclick = () => {
   $("newwarn").textContent = S.cfg.llm
-    ? "The transcript is saved to the team database and sent to the AI review provider (Groq). Don't paste unredacted personal information."
-    : "The transcript is saved to the team database. The AI review isn't set up on this server, so only sentiment is computed.";
-  $("new-err").textContent = ""; $("newdlg").showModal(); $("newtext").focus();
+    ? "Transcripts are saved to the team database and analyzed right away, which sends them to the AI review provider (Groq). Redacted text only."
+    : "Transcripts are saved to the team database and analyzed right away. The AI review isn't set up on this server, so only sentiment is computed.";
+  $("new-err").textContent = ""; $("newfiles").value = ""; $("newdlg").showModal(); $("newtext").focus();
 };
 $("newcancel").onclick = () => $("newdlg").close();
 $("newform").onsubmit = async (e) => {
   e.preventDefault();
-  const text = $("newtext").value.trim();
-  if (!text) return;
-  const go = $("newgo"); go.disabled = true; go.innerHTML = `<span class="spin"></span>Analyzing…`; $("new-err").textContent = "";
+  const texts = [...await Promise.all([...$("newfiles").files].map((f) => f.text())), $("newtext").value]
+    .map((t) => t.trim()).filter(Boolean);
+  if (!texts.length) { $("new-err").textContent = "Paste a transcript or choose .txt files."; return; }
+  const go = $("newgo"); go.disabled = true; go.innerHTML = `<span class="spin"></span>Uploading…`; $("new-err").textContent = "";
   try {
-    const r = await api("/api/analyze/new", { transcript: text });
-    S.res[r.id] = r; $("newdlg").close(); $("newtext").value = "";
-    await loadList(r.id);
-  } catch (err) { $("new-err").textContent = "Couldn't analyze: " + err.message; }
-  go.disabled = false; go.textContent = "Analyze";
+    const { ids } = await api("/api/analyze/new", { transcripts: texts });
+    $("newdlg").close(); $("newtext").value = ""; $("newfiles").value = "";
+    ids.forEach((id) => S.busy.add(id));          // processing from the moment they're saved
+    await loadList(ids[0]);
+    for (const id of ids) await run(id, false);   // one at a time, to stay inside the AI provider's rate limit
+  } catch (err) { $("new-err").textContent = "Couldn't upload: " + err.message; }
+  go.disabled = false; go.textContent = "Upload";
 };
 
 $("signout").onclick = async () => {

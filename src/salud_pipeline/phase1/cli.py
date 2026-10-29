@@ -1,8 +1,9 @@
 """Phase 1: call analysis on the team's shared Neon database. Two routes.
 
-Route 1, dashboard (review the AI's answers and tag):
+Route 1, dashboard (each call's stored analysis; new transcripts are analyzed automatically):
     salud-phase1 assign --raters avni,sharayu,aditya,ibrahim,ananya,rudrakshi   # team lead, once
     salud-phase1 dashboard --rater avni
+    salud-phase1 process      # analyze stored transcripts missing sentiment or an AI review, then exit
 
 Route 2, script (AI analysis of every call, then the comparison):
     salud-phase1 analyze      # LLM on calls without an analysis -> Neon (phase1.ai_analyses)
@@ -39,7 +40,7 @@ def cmd_dashboard(args) -> None:
         print(f"Note: no calls are assigned to '{rater}'. Assigned raters: {', '.join(names)}. "
               "Check the spelling, or pick 'All raters' on the page.")
     try:
-        httpd = serve(rater, args.port, store=store)
+        httpd = serve(rater, args.port, store=store, auto=not args.no_auto)
     except OSError as e:
         if e.errno != 48 and "in use" not in str(e):
             raise
@@ -50,6 +51,11 @@ def cmd_dashboard(args) -> None:
     by_source = {s: sum(c["source"] == s for c in calls) for s in ("real", "synthetic")}
     print(f"Rater {rater} ({mine} calls assigned). Team database: {by_source['real']} real + {by_source['synthetic']} synthetic calls, "
           f"{ai['analyzed']} with AI answers ({ai['model'] or 'none yet'}).")
+    if not args.no_auto:
+        from .dashboard import start_sweeper
+
+        start_sweeper(store)
+        print("Uploaded calls are analyzed right away; other new transcripts in the database within 15 seconds.")
     print(f"Open {url}  (Ctrl+C to stop)")
     if not args.no_browser:
         webbrowser.open(url)
@@ -57,6 +63,20 @@ def cmd_dashboard(args) -> None:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
+
+
+def cmd_process(args) -> None:
+    from . import live
+
+    store = Store()
+    if not live.llm_ready():
+        print("No LLM configured (GROQ_API_KEY): only sentiment is scored, AI reviews are left for later.")
+    r = live.process_pending(store, limit=args.limit, log=lambda cid, _: print(f"  analyzed {cid}"))
+    print(f"Analyzed {r['done']} of {r['pending']} calls that were missing results.")
+    if r["stopped"]:
+        print(f"Stopped early: {r['stopped']}")
+    if r["left"]:
+        print(f"{r['left']} calls left. Run `salud-phase1 process` again.")
 
 
 def cmd_assign(args) -> None:
@@ -122,10 +142,14 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    d = sub.add_parser("dashboard", help="route 1: review the AI's answers and tag calls")
+    d = sub.add_parser("dashboard", help="route 1: the agent dashboard (analyzes new transcripts automatically)")
     d.add_argument("--rater", required=True, help="your first name, as used in `assign` (e.g. avni)")
     d.add_argument("--port", type=int, default=8765)
     d.add_argument("--no-browser", action="store_true")
+    d.add_argument("--no-auto", action="store_true", help="don't analyze uploads or new transcripts in the background")
+
+    pr = sub.add_parser("process", help="analyze stored transcripts missing sentiment or an AI review")
+    pr.add_argument("--limit", type=int, help="maximum calls this run")
 
     s = sub.add_parser("assign", help="split the calls across raters (no options: show who has what)")
     s.add_argument("--raters", help="comma-separated first names, e.g. avni,sharayu,aditya")
@@ -138,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = ap.parse_args(argv)
     try:
-        {"dashboard": cmd_dashboard, "assign": cmd_assign, "analyze": cmd_analyze, "compare": cmd_compare}[args.cmd](args)
+        {"dashboard": cmd_dashboard, "process": cmd_process, "assign": cmd_assign, "analyze": cmd_analyze, "compare": cmd_compare}[args.cmd](args)
     except RuntimeError as e:
         sys.exit(f"Error: {e}")
     return 0

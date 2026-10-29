@@ -148,12 +148,13 @@ def test_analyze_page_scores_a_pasted_call_without_the_llm(store, monkeypatch):
 
     cid = None
     try:
-        r = post("/api/analyze/new", {"transcript": CALL})
-        cid = r["id"]
+        cid = post("/api/analyze/new", {"transcript": CALL})["ids"][0]
+        r = post("/api/analyze/run", {"id": cid})                      # what the page sends after the upload
         assert r["sentiment"]["call"]["caller_end_label"] == "positive" and r["analysis"] == {"none": True}
         assert "isn't set up" in r["notes"][0]
         listed = json.loads(urllib.request.urlopen(url + "/api/analyze/list").read())
-        assert any(c["call_id"] == cid and c["scored"] for c in listed["calls"]) and listed["llm"] is False
+        assert any(c["call_id"] == cid and c["scored"] and c["status"] == "done" for c in listed["calls"])
+        assert listed["llm"] is False
         assert cid not in {c["call_id"] for c in store.calls()}            # pasted calls stay out of comparisons
         again = post("/api/analyze/run", {"id": cid})                  # existing results load, nothing redone
         assert again["sentiment"] == r["sentiment"]

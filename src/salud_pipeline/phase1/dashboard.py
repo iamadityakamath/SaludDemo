@@ -1,18 +1,22 @@
-"""The agent dashboard, backed by the team's Neon database: pick a call or paste a new one, click Analyze, and see
-its sentiment, QA checklist results, summary, outcome and coaching tips (static/analyze.html).
+"""The agent dashboard, backed by the team's Neon database: pick a call or paste a new one and see its sentiment,
+QA checklist results, summary, outcome and coaching tips (static/analyze.html).
 
     salud-phase1 dashboard --rater avni
 
-Analyze fills in only what a call is missing (live.py): sentiment scored in this process, and the LLM review
-when an API key is set. Re-analyze redoes both and replaces the stored results. Calls pasted on the page are
-saved as source 'new'. The manual tagging page is gone; tags saved during Phase 1 stay in phase1.reviewed_tags
-for `salud-phase1 compare`.
+Uploading a call (pasted or .txt files, saved as source 'new') starts its analysis at once: sentiment scored in
+this process, and the LLM review when an API key is set, both saved to Neon. The list shows it as processing
+(live.call_status) and refreshes until it's done. Opening a call shows what is stored (/api/result) and fills in
+anything still missing (/api/analyze/run). Re-analyze redoes both and replaces the stored results. The manual tagging page is gone;
+tags saved during Phase 1 stay in phase1.reviewed_tags for `salud-phase1 compare`.
 
 Two ways to run it:
-- On a laptop (`salud-phase1 dashboard --rater avni`): 127.0.0.1 only, the user is fixed, no login.
+- On a laptop (`salud-phase1 dashboard --rater avni`): 127.0.0.1 only, the user is fixed, no login. Uploads
+  are analyzed in a server thread, and start_sweeper checks every 15 seconds for transcripts added any other way.
 - As the team website on Vercel (api/index.py). Every data request needs a session cookie, which /api/login
   sets after the team passcode (TEAM_PASSCODE) and a name from the assignments. The cookie is signed with a
-  key derived from the passcode, so changing the passcode signs everyone out.
+  key derived from the passcode, so changing the passcode signs everyone out. Nothing runs after a response
+  there, so the page starts an upload's analysis itself. A daily Vercel cron calls /api/cron/process
+  (vercel.json) with the CRON_SECRET bearer token for transcripts added any other way.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import hashlib
 import hmac
 import json
 import mimetypes
+import os
 import threading
 import time
 from http.cookies import SimpleCookie
@@ -40,6 +45,7 @@ BRANDING_DIR = REPO_ROOT / "branding"
 LOGO_NAMES = ["logo.svg", "logo.png", "logo.webp", "logo.jpg", "logo.jpeg"]
 SESSION_COOKIE = "qa_session"
 SESSION_DAYS = 30
+CRON_SECONDS = 45   # stay inside the website's 60 s function limit (vercel.json maxDuration)
 
 
 def _logo_path() -> Path | None:
@@ -67,8 +73,23 @@ def read_session(passcode: str, value: str) -> str | None:
         return None
 
 
-def make_handler(store: Store, rater: str | None = None, passcode: str | None = None):
-    """rater set: a laptop dashboard for that rater. rater None: the website, signed in with passcode."""
+def analyze_in_background(store: Store):
+    """on_upload for a long-running server (the laptop): analyze the uploaded calls in a thread, one at a time."""
+    def start(ids: list[str]):
+        def run():
+            for cid in ids:
+                try:
+                    live.analyze(store, cid)
+                except (RuntimeError, ValueError):   # the sweep or the page retries it
+                    pass
+        threading.Thread(target=run, name="salud-upload", daemon=True).start()
+    return start
+
+
+def make_handler(store: Store, rater: str | None = None, passcode: str | None = None, on_upload=None):
+    """rater set: a laptop dashboard for that rater. rater None: the website, signed in with passcode.
+    on_upload(ids) starts the analysis of uploaded calls on the server. On the website, where nothing may run
+    after the response, it is None and the page starts it (/api/analyze/run) right after the upload."""
     if rater is None and not passcode:
         raise ValueError("the website needs a team passcode")
     page = files("salud_pipeline.phase1").joinpath("static/analyze.html").read_text()
@@ -136,9 +157,22 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
                 return self._json({"error": "Pick your name from the list"}, 400)
             self._json({"ok": True}, cookie=self._cookie(make_session(passcode, name), SESSION_DAYS * 86400))
 
+        def _cron(self):
+            """Vercel cron: analyze stored transcripts that are missing results. Needs the CRON_SECRET bearer token."""
+            secret = os.environ.get("CRON_SECRET", "")
+            given = self.headers.get("Authorization", "").encode()
+            if len(secret) < 16 or not hmac.compare_digest(given, f"Bearer {secret}".encode()):
+                return self._json({"error": "not found"}, 404)
+            self._json(live.process_pending(store, seconds=CRON_SECONDS))
+
         def do_GET(self):
             url = urlparse(self.path)
             cid = parse_qs(url.query).get("id", [""])[0]
+            if url.path == "/api/cron/process":
+                try:
+                    return self._cron()
+                except RuntimeError as e:
+                    return self._json({"error": str(e)}, 503)
             me = self._rater()
             if url.path.startswith("/api/") and me is None:
                 return self._json({"error": "sign in", "login": True}, 401)
@@ -146,12 +180,15 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
                 if url.path in ("/", "/index.html", "/analyze"):
                     self._send(200, page.encode(), "text/html; charset=utf-8")
                 elif url.path == "/api/analyze/list":
-                    self._json({"me": me, "website": passcode is not None, "llm": live.llm_ready(),
-                                "items": TRANSCRIPT_ITEMS, "definitions": ITEM_DEFINITIONS,
-                                "calls": store.analysis_list()})
+                    llm = live.llm_ready()
+                    calls = [c | {"status": live.call_status(c, llm)} for c in store.analysis_list()]
+                    self._json({"me": me, "website": passcode is not None, "llm": llm,
+                                "items": TRANSCRIPT_ITEMS, "definitions": ITEM_DEFINITIONS, "calls": calls})
                 elif url.path == "/api/call":
                     t = transcript(cid)
                     self._json(t) if t else self._json({"error": "unknown call"}, 404)
+                elif url.path == "/api/result":
+                    self._json(live.results(store, cid))
                 elif url.path == "/brand/logo":
                     p = _logo_path()
                     if p is None:
@@ -159,6 +196,8 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
                     self._send(200, p.read_bytes(), mimetypes.guess_type(p.name)[0] or "application/octet-stream")
                 else:
                     self._json({"error": "not found"}, 404)
+            except ValueError as e:    # unknown call
+                self._json({"error": str(e)}, 404)
             except RuntimeError as e:  # e.g. database unreachable
                 self._json({"error": str(e)}, 503)
 
@@ -179,12 +218,19 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
                 me = self._rater()
                 if me is None:
                     return self._json({"error": "sign in", "login": True}, 401)
-                if path == "/api/analyze/new":
-                    text = str(body.get("transcript", ""))
-                    if len(text) > live.MAX_TRANSCRIPT_CHARS:
-                        raise ValueError(f"the transcript is too long (max {live.MAX_TRANSCRIPT_CHARS:,} characters)")
-                    cid = store.add_new_call(text, me)
-                    return self._json({"id": cid} | live.analyze(store, cid))
+                if path == "/api/analyze/new":   # upload: save now, analyze in the background (see on_upload)
+                    texts = body["transcripts"] if "transcripts" in body else [body.get("transcript", "")]
+                    if not isinstance(texts, list) or not 1 <= len(texts) <= live.MAX_UPLOAD_CALLS:
+                        raise ValueError(f"upload 1 to {live.MAX_UPLOAD_CALLS} transcripts at a time")
+                    texts = [str(t) for t in texts]
+                    if any(len(t) > live.MAX_TRANSCRIPT_CHARS for t in texts):
+                        raise ValueError(f"a transcript is too long (max {live.MAX_TRANSCRIPT_CHARS:,} characters)")
+                    if any(not t.strip() for t in texts):
+                        raise ValueError("a transcript is empty")
+                    ids = [store.add_new_call(t, me) for t in texts]
+                    if on_upload:
+                        on_upload(ids)
+                    return self._json({"ids": ids})
                 return self._json(live.analyze(store, str(body["id"]), redo=bool(body.get("redo"))))
             except (ValueError, KeyError, json.JSONDecodeError) as e:
                 return self._json({"error": str(e)}, 400)
@@ -197,5 +243,27 @@ def make_handler(store: Store, rater: str | None = None, passcode: str | None = 
     return Handler
 
 
-def serve(rater: str, port: int = 8765, store: Store | None = None) -> ThreadingHTTPServer:
-    return ThreadingHTTPServer(("127.0.0.1", port), make_handler(store or Store(), rater))
+def serve(rater: str, port: int = 8765, store: Store | None = None, auto: bool = False) -> ThreadingHTTPServer:
+    """auto: uploads are analyzed by the server in the background (the page's own request then just waits)."""
+    store = store or Store()
+    return ThreadingHTTPServer(("127.0.0.1", port),
+                               make_handler(store, rater, on_upload=analyze_in_background(store) if auto else None))
+
+
+def start_sweeper(store: Store, every: float = 15, log=print) -> threading.Event:
+    """Analyze new transcripts in the database now and then every `every` seconds, in a background thread.
+    Set the returned event to stop it."""
+    stop = threading.Event()
+
+    def run():
+        while not stop.is_set():
+            try:
+                r = live.process_pending(store, log=lambda cid, _: log(f"  analyzed {cid}"))
+                if r["stopped"]:
+                    log(f"  automatic analysis paused: {r['stopped'][:160]} ({r['left']} calls left)")
+            except RuntimeError as e:   # database unreachable: try again next round
+                log(f"  automatic analysis skipped: {str(e)[:160]}")
+            stop.wait(every)
+
+    threading.Thread(target=run, name="salud-sweeper", daemon=True).start()
+    return stop

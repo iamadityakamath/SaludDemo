@@ -69,6 +69,15 @@ class Store:
             "LEFT JOIN phase1.call_sentiment s USING (call_id) "
             "ORDER BY c.source = 'new' DESC, c.added_at DESC NULLS LAST, c.source = 'synthetic', c.file_id")
 
+    def pending_calls(self, need_review: bool = True) -> list[str]:
+        """Calls still missing sentiment (or, with need_review, an AI review), newest pasted calls first."""
+        missing = "s.call_id IS NULL" + (" OR a.call_id IS NULL" if need_review else "")
+        rows = self._all(
+            "SELECT c.call_id FROM phase1.calls c LEFT JOIN phase1.ai_analyses a USING (call_id) "
+            "LEFT JOIN phase1.call_sentiment s USING (call_id) WHERE " + missing +
+            " ORDER BY c.source = 'new' DESC, c.added_at DESC NULLS LAST, c.call_id")
+        return [r["call_id"] for r in rows]
+
     def add_new_call(self, transcript: str, added_by: str) -> str:
         """Save a transcript pasted on /analyze as call 'new/<time>-<id>'. Returns its call_id."""
         if not transcript.strip():

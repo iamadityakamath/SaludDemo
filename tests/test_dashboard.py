@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from types import SimpleNamespace
@@ -126,6 +127,100 @@ def test_reanalyze_without_an_llm_keeps_the_stored_review(store, url, no_cloud, 
         _drop(store, cid)
 
 
+def test_result_shows_only_what_is_stored(store, url, no_cloud):
+    cid = store.add_new_call(CALL, store.test_rater)
+    try:
+        before = _get(url + f"/api/result?id={cid}")
+        assert before["sentiment"] == {"none": True} and before["analysis"] == {"none": True} and not no_cloud
+        _post(url, "/api/analyze/run", {"id": cid})
+        after = _get(url + f"/api/result?id={cid}")
+        assert after["analysis"]["summary"] == "review 1" and after["sentiment"]["call"] and len(no_cloud) == 1
+    finally:
+        _drop(store, cid)
+
+
+def test_stored_transcripts_are_analyzed_without_opening_them(store, no_cloud):
+    cid = store.add_new_call(CALL, store.test_rater)       # newest call, so it is first in line
+    try:
+        assert cid in store.pending_calls()
+        r = live.process_pending(store, limit=1)
+        assert r["done"] == 1 and not r["stopped"] and cid not in store.pending_calls()
+        assert store.ai_analysis(cid)["summary"] == "review 1" and store.sentiment(cid)
+    finally:
+        _drop(store, cid)
+
+
+def test_automatic_analysis_stops_at_the_first_failed_review(store, no_cloud, monkeypatch):
+    class DownAssistant:
+        def __init__(self, endpoint, cache_dir):
+            pass
+
+        def review(self, text):
+            raise RuntimeError("rate limit reached for the day")
+
+    monkeypatch.setattr(live, "CallAssistant", DownAssistant)
+    ids = [store.add_new_call(CALL, store.test_rater) for _ in range(2)]
+    try:
+        r = live.process_pending(store)
+        assert r["done"] == 1 and "rate limit" in r["stopped"]
+        assert store.sentiment(ids[1]) and store.ai_analysis(ids[1]) is None   # sentiment kept, review retried later
+        assert store.sentiment(ids[0]) is None                                  # the sweep stopped before it
+    finally:
+        for cid in ids:
+            _drop(store, cid)
+
+
+def _status(url, cid):
+    return next(c["status"] for c in _get(url + "/api/analyze/list")["calls"] if c["call_id"] == cid)
+
+
+def test_upload_saves_at_once_and_shows_processing_until_analyzed(store, url, no_cloud):
+    ids = _post(url, "/api/analyze/new", {"transcripts": [CALL, CALL]})["ids"]
+    try:
+        assert len(ids) == 2 and not no_cloud                                # saved, nothing analyzed in the request
+        assert [_status(url, cid) for cid in ids] == ["processing", "processing"]
+        _post(url, "/api/analyze/run", {"id": ids[0]})                       # what the page sends right after
+        assert _status(url, ids[0]) == "done" and _status(url, ids[1]) == "processing"
+    finally:
+        for cid in ids:
+            _drop(store, cid)
+
+
+def test_laptop_dashboard_analyzes_uploads_in_the_background(store, no_cloud):
+    httpd = serve(store.test_rater, port=0, store=store, auto=True)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_port}"
+    cid = _post(base, "/api/analyze/new", {"transcript": CALL})["ids"][0]
+    try:
+        for _ in range(50):
+            if _status(base, cid) == "done":
+                break
+            time.sleep(0.1)
+        assert _status(base, cid) == "done" and store.ai_analysis(cid)["summary"] == "review 1"
+    finally:
+        httpd.shutdown()
+        _drop(store, cid)
+
+
+def test_upload_rejects_empty_or_too_many_transcripts(url):
+    for body in ({"transcripts": []}, {"transcripts": [CALL, "  "]}, {"transcripts": [CALL] * (live.MAX_UPLOAD_CALLS + 1)}):
+        with pytest.raises(urllib.error.HTTPError) as e:
+            _post(url, "/api/analyze/new", body)
+        assert e.value.code == 400
+
+
+def test_call_status():
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    call = {"scored": True, "analyzed": False, "added_at": now - timedelta(minutes=1)}
+    assert live.call_status(call, review=True, now=now) == "processing"
+    assert live.call_status(call, review=False, now=now) == "done"          # no LLM here: sentiment is everything
+    assert live.call_status(call | {"added_at": now - timedelta(hours=1)}, review=True, now=now) == "incomplete"
+    assert live.call_status(call | {"added_at": None}, review=True, now=now) == "incomplete"
+    assert live.call_status(call | {"analyzed": True}, review=True, now=now) == "done"
+
+
 def test_unknown_call_is_rejected(url, no_cloud):
     with pytest.raises(urllib.error.HTTPError) as e:
         _post(url, "/api/analyze/run", {"id": "real/does-not-exist.txt"})
@@ -191,3 +286,13 @@ def test_session_signature_depends_on_passcode():
     assert read_session("passcode-one-12", v) == "avni"
     assert read_session("passcode-two-12", v) is None                  # new passcode signs everyone out
     assert read_session("passcode-one-12", make_session("passcode-one-12", "avni", now=0)) is None   # expired
+
+
+def test_cron_needs_the_secret(store, site, monkeypatch):
+    runs = []
+    monkeypatch.setattr(live, "process_pending", lambda st, **kw: runs.append(kw) or {"done": 0})
+    assert _req(site, "/api/cron/process")[0] == 404                       # no CRON_SECRET set: no such page
+    monkeypatch.setenv("CRON_SECRET", "s" * 24)
+    assert _req(site, "/api/cron/process")[0] == 404
+    req = urllib.request.Request(site + "/api/cron/process", headers={"Authorization": "Bearer " + "s" * 24})
+    assert json.loads(urllib.request.urlopen(req).read()) == {"done": 0} and runs == [{"seconds": 45}]

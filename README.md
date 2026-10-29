@@ -45,12 +45,19 @@ cp .env.example .env     # paste DATABASE_URL (from the team lead); GROQ_API_KEY
 .venv/bin/salud-phase1 dashboard --rater avni     # local: http://127.0.0.1:8765, no sign-in
 ```
 
-Or use the team website (passcode, then your name). Pick a call, click **Analyze**, and see:
+Or use the team website (passcode, then your name). Pick a call and its stored results show straight away:
 - customer sentiment: how the call ended, the shift from the start, the curve, and a score on every turn
 - the QA score and checklist answers, with transcript quotes that jump to their turn
 - the AI summary, the call outcome and coaching tips for the agent
 
-**Analyze a new call** takes a pasted transcript, saves it as source `new`, scores its sentiment in the server and runs the LLM review (when `GROQ_API_KEY` is set), all saved to Neon. **Analyze** only fills in what a call is missing, so stored calls load instantly at no cost. **Re-analyze** redoes both and replaces the stored sentiment and AI review (for a Phase 1 call it asks first, since that call's comparison with raters' tags will then use the new review).
+**Upload calls** takes one or more `.txt` transcripts (or a pasted one), saves each as source `new` and starts its analysis at once: sentiment scored in the server and the LLM review (when `GROQ_API_KEY` is set), both saved to Neon. The call shows a spinner in the list, for everyone, until its results are stored, and the page refreshes on its own. On a laptop the server runs the analysis in the background; on the website, where nothing may run after a response, the uploader's page starts it.
+
+**Transcripts added any other way** (a script, SQL) are picked up too:
+- the laptop dashboard checks the database every 15 seconds (`--no-auto` turns this and the upload analysis off);
+- the website runs once a day through a Vercel cron (`/api/cron/process`, which needs the `CRON_SECRET` environment variable; Vercel's Hobby plan allows one run a day);
+- `salud-phase1 process` runs it once from the command line (`--limit N` caps the calls).
+
+These stop at the first failed AI review (for example Groq's daily cap) and pick up again on the next run. A call that is still missing a part after 10 minutes shows a **!** in the list; opening it finishes the analysis. Stored calls load instantly at no cost. **Re-analyze** redoes both and replaces the stored sentiment and AI review (for a Phase 1 call it asks first, since that call's comparison with raters' tags will then use the new review).
 
 Manual tagging is finished, and its page has been removed. The tags saved during Phase 1 stay in `phase1.reviewed_tags` (assigned with `salud-phase1 assign`, two raters per real call), and `salud-phase1 compare` still uses them.
 

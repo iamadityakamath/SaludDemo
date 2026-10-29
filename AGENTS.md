@@ -66,10 +66,12 @@ may open that URL in it.
 
 ## 5. Tell the user how to use it (keep it to these points)
 
-- Pick a call on the left and click **Analyze**: customer sentiment (how the call ended, the shift, a score
-  on every turn), the QA score and checklist with quotes, the AI summary, outcome and coaching tips.
-- **+ Analyze a new call** takes a pasted transcript (one turn per paragraph, `Agent: …` / `Patient: …`). It is
-  saved to the shared database and, when an LLM key is set, sent to Groq for the review. Redacted text only.
+- Pick a call on the left and its stored results show straight away: customer sentiment (how the call ended,
+  the shift, a score on every turn), the QA score and checklist with quotes, the AI summary, outcome and
+  coaching tips. New transcripts are analyzed automatically in the background.
+- **+ Upload calls** takes `.txt` transcripts or a pasted one (one turn per paragraph, `Agent: …` / `Patient: …`).
+  Each is saved to the shared database and analyzed straight away (a spinner shows until it's done); when an LLM
+  key is set, it is sent to Groq for the review. Redacted text only.
 - **↻ Re-analyze** redoes sentiment and the AI review and replaces the stored ones.
 - To stop the dashboard, press Ctrl+C in its terminal (or stop the background process).
 
@@ -86,8 +88,9 @@ may open that URL in it.
 
 ## Don't, unless the user explicitly asks
 
-- **Don't run `salud-db setup`, `salud-phase1 assign --raters …` or `salud-phase1 analyze`.** They change
-  the shared team database (the first two are for the team lead) or send real calls to an external LLM.
+- **Don't run `salud-db setup`, `salud-phase1 assign --raters …`, `salud-phase1 analyze` or `salud-phase1 process`.**
+  They change the shared team database (the first two are for the team lead) or send real calls to an external LLM.
+  The dashboard's background analysis only reaches an LLM when `GROQ_API_KEY` is set, which teammates don't need.
 - **Don't write to the database** with SQL or scripts, and don't delete or edit anyone's tags (Phase 1's
   manual tags are finished and kept for the comparison).
 - **Don't read or print transcripts, tags or AI analyses** into the chat. The database holds Salud's real
