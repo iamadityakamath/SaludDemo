@@ -5,6 +5,79 @@ first. Kept up to date with every task.
 
 ---
 
+## Model and data watch list (maintained; update whenever a new behaviour is found or an item changes)
+
+Known behaviours of the models and data. Each item says what we saw, the evidence, what it affects, and what was
+decided. **Status:** `accepted` = known and left as is on purpose; `open` = not yet acted on; `fixed` = resolved.
+Real-data numbers come from very few rows, so treat them as directions, not measurements.
+
+### Pre-call model (GB-06, monotone LightGBM on FS_TRANSFER, trained on the Salud-tuned synthetic world)
+
+1. **New accounts score low ("the new-account dip").** `accepted` (user decision 2026-11-18: keep these scores as they are)
+   - **Seen:** patients placed in the last 60 days who have never paid get a low score. The model learned
+     "no payment history = unlikely to pay".
+   - **Evidence (2026-11-18):** on the 58 real test rows, the 25 new, never-paid patients were predicted **13%** but **48%** paid.
+     In the synthetic training data such patients pay only **19%** (130 of 1,794 patients). Within this group the model can't rank at all
+     (real AUC 0.47, synthetic 0.62 on 15 rows).
+   - **Impact:**
+     - new placements will sit in the low tiers even though about half pay within 30 days;
+     - only 1 of today's 46 scored real patients is new, so the current scores file is barely affected, but daily use would be;
+     - new accounts are the largest group in the real test (25 of 58).
+   - **If revisited:**
+     - add "new, never paid → pay rate" to `salud-synth-calibrate` and retune the world;
+     - add new-account signals (balance size, hospital or physician, insurance stage, days since placement);
+     - or score new accounts with a simple rule.
+2. **All of the ranking comes from "has paid before or not".** `open`
+   - **Evidence:** on the real rows, ranking within each group is no better than chance (has paid before: 0.30 on 17 rows; older, never paid: 0.11 on 16 rows).
+     The synthetic within-group AUCs are 0.86 for has paid before and 0.39 for older, never paid.
+   - **Impact:** this explains why the model (real 0.70) doesn't beat the rule "paid before, most recent payment first" (0.72).
+     The recommendation stays: the rule sets the call order, with the score shown beside it.
+3. **Under-predicts Salud's overall pay rate.** `accepted`
+   - **Evidence:** the model predicts about 25% on average against 50% actual on the real rows. Synthetic patients pay at 35% in the fixed design, against 50% for Salud's call rows.
+   - **Handled by:** an intercept shift of +1.7 log-odds (leave-one-out), which takes the Brier score from 0.287 to 0.219.
+   - **Impact:** the ranking is unaffected; the probabilities and expected dollars depend on the shift.
+4. **Raw boosted-tree probabilities are too cautious.** `fixed`
+   - **Evidence:** calibration slope 1.92.
+   - **Handled by:** sigmoid calibration (Brier 0.132 → 0.119).
+5. **Holdout scores lower than cross-validation.** `accepted`
+   - **Evidence:** 0.83 on the holdout against 0.88 in cross-validation.
+   - The holdout is a random 20% of patients, so this is **not** drift over time; I wrongly called it drift at first (corrected 2026-11-18).
+     The likely cause is optimism from picking the best of 86 runs on the same folds.
+6. **The real test is not independent.** `open`
+   - The world was tuned to the same 84 real calls, so a real AUC of 0.70 shows consistency, not generalisation.
+   - **Needs:** new Salud calls.
+
+### Post-call model (comparison only; not chosen or tuned)
+
+7. **The QA score and sentiment add nothing.** `accepted`
+   - **Evidence:**
+     - synthetic cross-validation: adding them gains at most 0.001;
+     - real (47 rows): the QA score alone gives AUC 0.59 (0.42–0.75), and adding it to the model moves 0.680 to 0.684.
+   - **Impact:** only how the call ended adds signal (+0.04 to +0.06 on synthetic data).
+     In the synthetic world, call quality affects payment only through how the call ends, so this partly reflects how the world was built.
+8. **On real calls, adding how the call ended scored lower than pre-call features alone.** `open`
+   - **Evidence:** 0.704 → 0.680 on 47 rows, inside the noise. Watch it when more real calls arrive.
+9. **The post-call model hasn't been chosen or tuned.** `open`
+   - Notebook 10 compares feature groups only. Tune it when there is real outcome data to train or test it on.
+
+### Data
+
+10. **Salud's extract has no contact history.** `accepted`
+    - Adversarial validation tells synthetic from real at AUC 0.945, almost entirely through `days_since_last_contact`.
+    - Prior-contact features are therefore excluded from FS_TRANSFER.
+11. **The synthetic world matches 50 of 51 real statistics.** `accepted`
+    - **Miss:** the share of patients with an adjustment in the last 365 days is 0.250 in synthetic data, against a real upper bound of 0.242.
+    - **Not checked yet:** the new-account pay rate (see item 1).
+12. **All real test rows come from one day (2026-07-01).** `open`
+    - There is no time variation in the real test, and 58 rows give AUC intervals of about ±0.15.
+13. **The "oracle" is no longer a ceiling.** `accepted`
+    - Hidden traits explain only 0.60, because an observable payment habit drives payment in the Salud-tuned world.
+14. **The neural network fails on small samples.** `accepted`
+    - Its AUC is below 0.5 when trained on 200 rows or fewer (early stopping on tiny validation sets).
+      Don't use it at real-data sizes.
+
+---
+
 ## 2026-11-18 · Clean-up for a fresh start
 
 **Deleted, at the user's choice:**
