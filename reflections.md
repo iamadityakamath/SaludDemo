@@ -5,6 +5,20 @@ first. Kept up to date with every task.
 
 ---
 
+## 2026-11-18 · Clean-up for a fresh start
+
+**Deleted, at the user's choice:**
+- caches (`__pycache__`, `.pytest_cache`, `.DS_Store`);
+- obsolete local outputs: `reports/qa`, `reports/sentiment`, `reports/phase1/backups` and `reports/phase1/ai_versions`, all of which are held in Neon;
+- the original synthetic world: its data, snapshots and sentiment cache, plus the `reports/phase2/original_world` archive;
+- Salud's raw transcript copy (the code reads only the "Inferred Speakers" version);
+- `configs/synthetic_world_null_call_quality.json` (no code used it).
+
+**Kept:** all code (the original world can be regenerated from `configs/synthetic_world.json`), the Salud-tuned world, the
+final package, the real QA scores, the experiment log and Neon. Tests pass and the propensity data still loads.
+
+---
+
 ## 2026-11-18 · Stage 1 QA on Salud's 84 real calls
 
 **Result:**

@@ -160,7 +160,6 @@ data/phase2/synthetic_world/
    - If Correct Call Statusing is No, the CRM records the wrong result; if Grammar is No, the agent note is garbled.
 4. **History before the cutoff:** statement-driven payments, promise-to-pay follow-through, payment plans, financial-assistance adjustments and insurance payments.
 5. **Outcome window** (cutoff 2026-04-01, 90 days): each open account pays with probability `sigmoid(OutcomeModel · features)`.
-   - `configs/synthetic_world_null_call_quality.json` sets the call-quality effect to 0, to check that the pipeline doesn't find signal where none was planted. Indirect effects remain, as in real data.
 
 ### Traps that are deliberate (and realistic)
 

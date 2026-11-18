@@ -66,7 +66,7 @@ The "oracle" (hidden traits) now reaches only 0.60, because payment is driven by
 - adopt the model once new real calls show it beating the rule;
 - the scores file (`reports/phase2/propensity_scores.xlsx`, 46 patients, 5 tiers) states this caveat.
 
-**Archive:** the original world's results, notebooks and scores are in `reports/phase2/original_world/`. All sections below
+**Original world:** its local files were deleted on 2026-11-18 (clean-up); regenerate with `salud-synth --config configs/synthetic_world.json`. Its results are kept here: all sections below
 this line are **original-world** numbers.
 
 ---
