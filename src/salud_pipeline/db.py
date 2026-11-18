@@ -7,8 +7,8 @@
 - applies migrations not yet recorded in public.schema_migrations
 - loads big_synthetic (Salud's CRM tables, synthetic) from data/phase2/synthetic_world if it is empty
 - imports the 60 Phase 1 calls with transcripts, the AI analyses from reports/phase1/ai_analyses.json,
-  reviewed tags from data/phase1/reviewed_tags/ and the older manual tags, never overwriting rows teammates
-  already saved in the database.
+  and reviewed tags from data/phase1/reviewed_tags/, never overwriting rows teammates already saved in the
+  database.
 
 After setup, the dashboard and `salud-phase1 analyze` / `compare` work directly against the database.
 Schema changes use the direct connection (DATABASE_URL_UNPOOLED).
@@ -19,14 +19,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 
 import pandas as pd
 import psycopg
 from psycopg.types.json import Jsonb
 
-from .paths import (AI_ANALYSES, LEGACY_MANUAL_TAGS, PHASE1_SYNTHETIC_CALLS, PHASE2_SYNTHETIC_WORLD, REAL_TAGS,
-                    REPO_ROOT, SYNTHETIC_TAGS)
+from .paths import AI_ANALYSES, PHASE1_SYNTHETIC_CALLS, PHASE2_SYNTHETIC_WORLD, REAL_TAGS, REPO_ROOT, SYNTHETIC_TAGS
 from .phase1.calls import phase1_sources
 from .phase1.checklist import LABEL_COLUMNS, TARGETS, clean_transcript, load_synthetic
 from .phase1.store import Store, database_url
@@ -35,8 +35,8 @@ from .phase2 import schema as S
 MIGRATIONS = REPO_ROOT / "db" / "migrations"
 # Parents before children, so foreign keys hold during the load.
 CRM_TABLES = [S.GUARANTOR, S.ACCOUNTS, S.CONTACTS, S.BRIDGE, S.RECEIPTS, S.QA_REVIEW]
-PHASE1_TABLES = ["calls", "ai_analyses", "ai_checklist", "ai_coaching", "reviewed_tags", "legacy_manual_tags",
-                 "assignments"]
+PHASE1_TABLES = ["calls", "ai_analyses", "ai_checklist", "ai_coaching", "ai_analysis_versions", "call_sentiment",
+                 "turn_sentiment", "reviewed_tags", "assignments"]
 
 
 def connect() -> psycopg.Connection:
@@ -143,8 +143,7 @@ def setup() -> None:
         world = load_world_if_empty(conn)
         calls = import_calls(conn)
         tags = {"reviewed (real)": _import_tags(conn, REAL_TAGS, "real", "reviewed_tags"),
-                "reviewed (synthetic)": _import_tags(conn, SYNTHETIC_TAGS, "synthetic", "reviewed_tags"),
-                "legacy manual": _import_tags(conn, LEGACY_MANUAL_TAGS, "real", "legacy_manual_tags")}
+                "reviewed (synthetic)": _import_tags(conn, SYNTHETIC_TAGS, "synthetic", "reviewed_tags")}
     store = Store()
     added = import_ai_analyses(store)
     store.close()
@@ -165,6 +164,10 @@ def status() -> None:
                     conn.rollback()
                     n = "missing (run salud-db setup)"
                 print(f"  {schema + '.' + t:50s} {n}")
+        for (t,) in conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'final' "
+                                 "AND table_type = 'BASE TABLE' ORDER BY 1").fetchall():
+            n = conn.execute(f'SELECT count(*) FROM final."{t}"').fetchone()[0]
+            print(f"  {'final.' + t:50s} {n}")
         try:
             rows = conn.execute("SELECT c.source, count(*), count(a.call_id) FROM phase1.calls c "
                                 "LEFT JOIN phase1.ai_analyses a USING (call_id) GROUP BY 1 ORDER BY 1").fetchall()
@@ -174,13 +177,34 @@ def status() -> None:
             conn.rollback()
 
 
+def load_final(test: bool, replace: bool) -> None:
+    from .final_package import load
+    from .llm_client import load_dotenv
+
+    load_dotenv()
+    if test:
+        url = os.environ.get("DATABASE_URL_TEST")
+        if not url:
+            raise RuntimeError("DATABASE_URL_TEST is not set (the Neon 'tests' branch)")
+        print("Target: Neon 'tests' branch (DATABASE_URL_TEST)")
+    else:
+        url = database_url(direct=True)
+        print("Target: team database")
+    load(url, replace=replace)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="salud-db", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("cmd", choices=["setup", "status"])
+    ap.add_argument("cmd", choices=["setup", "status", "load-final"])
+    ap.add_argument("--test", action="store_true", help="load-final: use the Neon 'tests' branch (DATABASE_URL_TEST)")
+    ap.add_argument("--replace", action="store_true", help="load-final: empty the final tables and load again")
     args = ap.parse_args(argv)
     try:
-        {"setup": setup, "status": status}[args.cmd]()
+        if args.cmd == "load-final":
+            load_final(args.test, args.replace)
+        else:
+            {"setup": setup, "status": status}[args.cmd]()
     except RuntimeError as e:
         sys.exit(f"Error: {e}")
     return 0

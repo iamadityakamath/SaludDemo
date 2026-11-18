@@ -143,6 +143,29 @@ class Store:
                           (call_id, i, t.get("item"), t.get("tip"), t.get("turn")))
         return True
 
+    def ai_versions(self, model: str, prompt_version: str) -> dict[str, dict]:
+        """call_id -> analysis for one (model, prompt version) in phase1.ai_analysis_versions."""
+        rows = self._all("SELECT call_id, raw FROM phase1.ai_analysis_versions WHERE model = %s AND prompt_version = %s",
+                         (model, prompt_version))
+        return {r["call_id"]: r["raw"] for r in rows}
+
+    def add_ai_version(self, call_id: str, analysis: dict, model: str, prompt_version: str) -> bool:
+        """Keep one analysis as a trial version, beside the one the dashboard uses. False if already stored.
+        Only `salud-phase1 trial` writes here; dashboard analyses stay in phase1.ai_analyses."""
+        from .compare import call_quality
+
+        cl = analysis.get("checklist") or {}
+        with self.pool.connection() as c:
+            return c.execute(
+                "INSERT INTO phase1.ai_analysis_versions (call_id, model, prompt_version, analyzed_at, sentiment, "
+                "outcome, quality_score, summary, quotes_dropped, raw) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT DO NOTHING RETURNING call_id",
+                (call_id, model, prompt_version, analysis.get("analyzed_at"),
+                 (analysis.get("sentiment") or {}).get("label"), (analysis.get("outcome") or {}).get("label"),
+                 call_quality({k: (cl.get(k) or {}).get("answer") for k in TRANSCRIPT_ITEMS}),
+                 analysis.get("summary"), (analysis.get("evidence_check") or {}).get("dropped"),
+                 Jsonb(analysis))).fetchone() is not None
+
     def replace_ai_analysis(self, call_id: str, analysis: dict, model: str, prompt_version: str) -> None:
         """Re-analyze on the agent dashboard: drop this call's stored analysis (with its checklist and coaching
         rows) and add the new one. The only place an analysis is ever changed, and only for this one call."""

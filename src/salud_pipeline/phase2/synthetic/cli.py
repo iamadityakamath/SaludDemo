@@ -82,12 +82,14 @@ def _summary(t: dict[str, pd.DataFrame]) -> dict:
     acc = t["truth_accounts"]
     openm = acc[acc["open_at_cutoff"]]
     calls = t["truth_calls"]
-    q = pd.qcut(openm["feat_call_quality"], 4, duplicates="drop")
+    by_quality = {}
+    if "feat_call_quality" in openm:   # planted-outcome worlds only (realism mode has no planted features)
+        q = pd.qcut(openm["feat_call_quality"], 4, duplicates="drop")
+        by_quality = {str(k): round(float(v), 3) for k, v in openm.groupby(q, observed=True)["planted_paid"].mean().items()}
     return {
         "accounts_open_at_cutoff": int(len(openm)),
-        "pay_rate_in_window": round(float(openm["planted_paid"].mean()), 3),
-        "pay_rate_by_call_quality_quartile": {str(k): round(float(v), 3)
-                                              for k, v in openm.groupby(q, observed=True)["planted_paid"].mean().items()},
+        "pay_rate_in_window": round(float(openm["planted_paid"].astype(float).mean()), 3),
+        "pay_rate_by_call_quality_quartile": by_quality,
         "connected_calls": int(len(calls)),
         "qa_pass_rate_by_item": {k: round(float(calls[f"qa_{k}"].mean()), 3) for k in S.QA_KEYS},
         "sentiment_mix": calls["sentiment_label"].value_counts(normalize=True).round(3).to_dict(),

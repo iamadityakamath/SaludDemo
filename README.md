@@ -34,6 +34,7 @@ cp .env.example .env     # paste DATABASE_URL (from the team lead); GROQ_API_KEY
 - **Connection string.** It's shared privately by the team lead. Never commit it; this repository is public.
 - **Real call data.** The database holds Salud's 10 redacted real calls. This Neon project isn't HIPAA-enabled, so keep access to the team, and confirm with Salud before sharing it further.
 - **Team lead only:** `salud-db setup` applies schema changes and imports local files. It's safe to rerun; it only adds what's missing.
+- **Salud's final package** (84 real calls: CRM tabs + transcripts, `data/BIG_Final_Package_84`, gitignored) is in schema **`final`**, one table per workbook tab plus `final.transcripts` and `final.option_codes`, stored as received. Team lead loads it with `salud-db load-final` (`--test` for the Neon tests branch, `--replace` to reload); it checks the package first and verifies every row after.
 
 ---
 
@@ -189,7 +190,7 @@ Salud's own data lives in **Microsoft SQL Server**: a Dynamics CRM database, `sa
 | Schema | Tables |
 |---|---|
 | `big_synthetic` | Salud's 6 CRM tables (accounts, contact history, account↔contact bridge, receipts, QA reviews, guarantors), same names as their SQL Server script, filled with synthetic data |
-| `phase1` | `calls` (real + synthetic, with transcripts and planted labels), `ai_analyses`, `ai_checklist`, `ai_coaching`, `reviewed_tags`, `legacy_manual_tags` (tags made before AI pre-fill; not used in comparisons) |
+| `phase1` | `calls` (real + synthetic, with transcripts and planted labels), `ai_analyses`, `ai_checklist`, `ai_coaching`, `ai_analysis_versions` (prompt trials), `call_sentiment`, `turn_sentiment`, `reviewed_tags`, `assignments` (also the login's list of names) |
 
 - **Connections:** `DATABASE_URL` (pooled) is used by the dashboard and scripts. `DATABASE_URL_UNPOOLED` (direct) is used by `salud-db` for schema changes.
 - **SQL Server → Postgres:** `uniqueidentifier`→`uuid`, `nvarchar`→`varchar`/`text`, `money`→`numeric(19,4)`, `datetime`→`timestamp`, `bit`→`boolean`. Names are unchanged, so moving to Salud's SQL Server is a type swap.

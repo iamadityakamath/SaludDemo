@@ -16,12 +16,27 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# Propensity modelling notebooks (notebooks/): uv pip install -e '.[dev,model]'
+model = [
+    "scikit-learn>=1.5",
+    "lightgbm>=4.3",
+    "shap>=0.46",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "jupyterlab>=4.2",
+    "ipykernel>=6.29",
+    "nbstripout>=0.7",
+    "nbformat>=5.10",
+    "nbconvert>=7.16",
+]
 
 [project.scripts]
 salud-phase1 = "salud_pipeline.phase1.cli:main"
 salud-db = "salud_pipeline.db:main"
 salud-synth = "salud_pipeline.phase2.synthetic.cli:main"
+salud-synth-calibrate = "salud_pipeline.phase2.synthetic.calibrate:main"
 salud-sentiment = "salud_pipeline.sentiment.cli:main"
+salud-propensity = "salud_pipeline.phase2.propensity.cli:main"
 
 [build-system]
 requires = ["hatchling"]

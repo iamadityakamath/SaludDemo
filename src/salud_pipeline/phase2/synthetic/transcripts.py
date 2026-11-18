@@ -61,7 +61,7 @@ def render_template(call: dict, rng: np.random.Generator, noise: float = 0.15) -
     inbound = str(call["direction"]).startswith("inbound")
     scen = call["scenario"]
     caller = {"patient": "Patient", "non_patient_guarantor": "Patient Representative",
-              "insurance": "Insurance Representative"}[call["caller_type"]]
+              "insurance": "Insurance Representative", "other": "Caller"}[call["caller_type"]]
     ok = {k[3:]: bool(v) for k, v in call.items() if k.startswith("qa_")}
     sent = call["sentiment_label"]
     bal = _money(call["total_balance_discussed"] or 0.0)
@@ -103,6 +103,8 @@ def render_template(call: dict, rng: np.random.Generator, noise: float = 0.15) -
         "hardship": ["I lost my job a couple months ago and I just can't pay this right now.",
                      "Honestly money is really tight, I'm on a fixed income and I can't afford this."],
         "dispute": ["I already paid this. I don't owe anything.", "This charge is wrong, I never had that service."],
+        "transfer": ["My doctor's office told me to call about a charge, but I think it's their billing I need.",
+                     "I need to update something with the hospital, I'm not sure I have the right department."],
         "third_party": ["I'm calling from the patient's insurance plan about an authorization on [REDACTED SERVICE DATE].",
                         "I'm with [REDACTED INSURANCE NAME], calling about a denied claim for a member."],
     }
@@ -160,6 +162,7 @@ def render_template(call: dict, rng: np.random.Generator, noise: float = 0.15) -
             "billing_question": "So you want to know what this charge is for. Let me walk you through it.",
             "wants_to_pay": "Great, I can help you with that today.",
             "third_party": "So you're calling to confirm the authorization status for the scheduled procedure, correct?",
+            "transfer": "Got it. That's handled by a different department, so let me get you to the right team.",
         }[scen]
         b.say(A, follow)
     else:

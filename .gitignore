@@ -13,6 +13,7 @@ __pycache__/
 data/Redacted Transcripts (Raw)/
 data/Redacted Transcripts with Inferred Speakers/
 data/BIG_Schema_Only_Handoff/
+data/BIG_Final_Package_84/
 docs/
 
 # Generated data: synthetic calls, synthetic world, manual tags (reproducible or personal)

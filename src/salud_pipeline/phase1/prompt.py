@@ -15,9 +15,29 @@ from datetime import datetime
 from pathlib import Path
 
 from ..llm_client import LLMEndpoint
-from .checklist import ITEM_DEFINITIONS, OUTCOME_DEFINITIONS, OUTCOME_PRECEDENCE, OUTCOMES, SENTIMENTS, TRANSCRIPT_ITEMS
+from dataclasses import dataclass
 
-PROMPT_VERSION = "assist-v2"  # v2: precise outcome definitions
+from . import checklist, prompt_v3
+from .checklist import OUTCOMES, SENTIMENTS, TRANSCRIPT_ITEMS
+
+
+@dataclass(frozen=True)
+class PromptSpec:
+    """What differs between prompt versions; the rest of the prompt is shared."""
+    items: dict[str, str]
+    outcomes: dict[str, str]
+    precedence: list[str]
+    rules: str = ""            # extra rules after the checklist
+    sentiment_note: str = ""   # extra guidance under "sentiment"
+    outcome_note: str = ""     # extra guidance under the outcome list
+
+
+PROMPT_VERSION = "assist-v2"  # the dashboard's version (v2: precise outcome definitions). v3 lost its trial.
+VERSIONS = {
+    "assist-v2": PromptSpec(checklist.ITEM_DEFINITIONS, checklist.OUTCOME_DEFINITIONS, checklist.OUTCOME_PRECEDENCE),
+    "assist-v3": PromptSpec(prompt_v3.ITEM_DEFINITIONS, prompt_v3.OUTCOME_DEFINITIONS, prompt_v3.OUTCOME_PRECEDENCE,
+                            prompt_v3.RULES, prompt_v3.SENTIMENT_NOTE, prompt_v3.OUTCOME_NOTE),
+}
 
 SYSTEM = (
     "You are a senior quality-assurance reviewer for a hospital patient billing call center that "
@@ -39,16 +59,20 @@ def split_turns(text: str) -> list[dict]:
     return turns
 
 
-def build_prompt(turns: list[dict]) -> str:
-    items = "\n".join(f'  "{k}": {d}' for k, d in ITEM_DEFINITIONS.items())
-    outcomes = "\n".join(f'  "{k}": {OUTCOME_DEFINITIONS[k]}' for k in OUTCOME_PRECEDENCE)
+def build_prompt(turns: list[dict], version: str = PROMPT_VERSION) -> str:
+    spec = VERSIONS[version]
+    items = "\n".join(f'  "{k}": {d}' for k, d in spec.items.items())
+    outcomes = "\n".join(f'  "{k}": {spec.outcomes[k]}' for k in spec.precedence)
+    rules = f"\n{spec.rules}\n" if spec.rules else ""
+    sentiment_note = f"\n{spec.sentiment_note}" if spec.sentiment_note else ""
+    outcome_note = f"\n{spec.outcome_note}" if spec.outcome_note else ""
     numbered = "\n".join(f"[T{t['n']}] {t['speaker']}: {t['text']}" for t in turns)
     return f"""Review this call and return ONE JSON object.
 
 CHECKLIST (answer each "Yes", "No" or "N/A"; use "N/A" only when the item cannot apply to this call,
 e.g. no balance was discussed, or the caller is an insurance representative):
 {items}
-
+{rules}
 For every checklist item give:
 - "answer"
 - "reason": one short sentence
@@ -57,7 +81,7 @@ For every checklist item give:
   went wrong (e.g. the balance disclosed before verification). Quotes must be copied exactly, 3-25 words.
 
 Also return:
-- "sentiment": {{"label": one of {SENTIMENTS}, "evidence": [...same format, caller turns...]}}
+- "sentiment": {{"label": one of {SENTIMENTS}, "evidence": [...same format, caller turns...]}}{sentiment_note}
 - "outcome":   {{"label": <one outcome key below>, "evidence": [...turns showing how the call ended...]}}
 - "summary": one sentence describing the call
 - "coaching": 1-4 tips for the agent, each {{"item": <checklist key or "general">, "tip": "<specific, actionable
@@ -65,7 +89,7 @@ Also return:
   If the call was excellent, give one tip that reinforces what went well. Never recommend pressuring the caller.
 
 OUTCOME (how the call ended; if more than one fits, choose the one listed first):
-{outcomes}
+{outcomes}{outcome_note}
 
 Shape:
 {{"checklist": {{"greeting": {{"answer": "Yes", "reason": "...", "evidence": [{{"turn": 2, "quote": "..."}}]}}, ...all 7 items...}},
@@ -156,12 +180,15 @@ def parse(raw: str, turns: list[dict]) -> dict:
 class CallAssistant:
     """Runs the one-prompt review with an on-disk cache keyed by (model, prompt version, transcript)."""
 
-    def __init__(self, endpoint: LLMEndpoint, cache_dir: Path):
+    def __init__(self, endpoint: LLMEndpoint, cache_dir: Path, version: str = PROMPT_VERSION):
+        if version not in VERSIONS:
+            raise ValueError(f"unknown prompt version {version!r}; known: {', '.join(VERSIONS)}")
         self.endpoint = endpoint
         self.cache_dir = cache_dir
+        self.version = version
 
     def _path(self, text: str) -> Path:
-        key = hashlib.sha256(f"{self.endpoint.model}|{PROMPT_VERSION}|{text}".encode()).hexdigest()[:24]
+        key = hashlib.sha256(f"{self.endpoint.model}|{self.version}|{text}".encode()).hexdigest()[:24]
         return self.cache_dir / f"{key}.json"
 
     def cached(self, text: str) -> dict | None:
@@ -176,7 +203,7 @@ class CallAssistant:
             return json.loads(path.read_text())
         turns = split_turns(text)
         raw = self.endpoint.chat([{"role": "system", "content": SYSTEM},
-                                  {"role": "user", "content": build_prompt(turns)}],
+                                  {"role": "user", "content": build_prompt(turns, self.version)}],
                                  temperature=0.0, json_mode=True, max_tokens=3500)
         result = parse(raw, turns) | {"model": self.endpoint.model, "provider": self.endpoint.provider,
                                       "analyzed_at": datetime.now().isoformat(timespec="seconds")}

@@ -28,7 +28,7 @@ def store(test_db_url):
     with s.pool.connection() as c:  # remove everything this test created
         c.execute("DELETE FROM phase1.reviewed_tags WHERE rater = %s OR call_id = %s", (s.test_rater, s.test_call))
         c.execute("DELETE FROM phase1.assignments WHERE rater = %s", (s.test_rater,))
-        for table in ("ai_coaching", "ai_checklist", "ai_analyses"):
+        for table in ("ai_coaching", "ai_checklist", "ai_analyses", "ai_analysis_versions"):
             c.execute(f"DELETE FROM phase1.{table} WHERE call_id = %s", (s.test_call,))
         c.execute("DELETE FROM phase1.calls WHERE call_id = %s", (s.test_call,))
     s.close()

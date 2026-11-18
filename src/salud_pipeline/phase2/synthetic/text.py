@@ -11,6 +11,7 @@ SCENARIO_NOTE = {
     "hardship": "Pt reports financial hardship",
     "dispute": "Pt disputes balance",
     "third_party": "Ins rep called re: pt acct",
+    "transfer": "Caller needed another dept",
 }
 
 RESULT_NOTE = {

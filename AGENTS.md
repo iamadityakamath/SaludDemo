@@ -88,8 +88,8 @@ may open that URL in it.
 
 ## Don't, unless the user explicitly asks
 
-- **Don't run `salud-db setup`, `salud-phase1 assign --raters …`, `salud-phase1 analyze` or `salud-phase1 process`.**
-  They change the shared team database (the first two are for the team lead) or send real calls to an external LLM.
+- **Don't run `salud-db setup`, `salud-db load-final`, `salud-phase1 assign --raters …`, `salud-phase1 analyze` or `salud-phase1 process`.**
+  They change the shared team database (the first three are for the team lead) or send real calls to an external LLM.
   The dashboard's background analysis only reaches an LLM when `GROQ_API_KEY` is set, which teammates don't need.
 - **Don't write to the database** with SQL or scripts, and don't delete or edit anyone's tags (Phase 1's
   manual tags are finished and kept for the comparison).

@@ -1,0 +1,30 @@
+{
+  "seed": 11,
+  "n_guarantors": 2000,
+  "n_agents": 40,
+  "history_start": "2025-01-01",
+  "prediction_cutoff": "2026-04-01",
+  "outcome_horizon_days": 90,
+  "spanish_rate": 0.02,
+  "representative_caller_rate": 0.04,
+  "hardship_rate": 0.10,
+  "mean_contact_attempts": 2.5,
+  "realism": {
+    "accounts_extra_mean": 4.5,
+    "accounts_dispersion": 0.7,
+    "visit_spread_days": 300,
+    "insurance_payment_p": 0.065,
+    "start_intercept": -8.3,
+    "start_age": 1.6,
+    "continue_intercept": 1.2,
+    "call_to_habit": 0.2,
+    "ptp_keep_scale": 0.3,
+    "pay_by_phone": 0.25,
+    "inbound_scale": 3.5,
+    "inbound_pay_offset": 0.0,
+    "outbound_skip_paying": 0.8,
+    "hardship_scale": 0.2,
+    "result_offsets": {"promised_to_pay": 0.5, "non_committal": -0.6, "paid_plan_full": -0.5,
+                       "paid_account_full": -0.6, "partial_payment": -0.6}
+  }
+}

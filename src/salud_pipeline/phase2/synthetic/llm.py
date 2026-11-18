@@ -47,7 +47,7 @@ def build_prompt(call: dict) -> str:
         f"- {BEHAVIOR[k][0] if call[f'qa_{k}'] else BEHAVIOR[k][1]}" for k in BEHAVIOR
     )
     caller = {"patient": "the patient", "non_patient_guarantor": "a family member responsible for the bill",
-              "insurance": "an insurance company representative"}[call["caller_type"]]
+              "insurance": "an insurance company representative", "other": "another caller (e.g. someone at a provider's office)"}[call["caller_type"]]
     return f"""Write a realistic phone call transcript between a hospital billing agent and {caller}.
 
 Setting: US hospital patient billing office (healthcare revenue cycle). Direction: {call['direction'].replace('_', ' ')}.

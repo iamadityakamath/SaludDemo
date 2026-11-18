@@ -8,6 +8,7 @@ Route 1, dashboard (each call's stored analysis; new transcripts are analyzed au
 Route 2, script (AI analysis of every call, then the comparison):
     salud-phase1 analyze      # LLM on calls without an analysis -> Neon (phase1.ai_analyses)
     salud-phase1 compare      # AI vs every rater's tags -> reports/phase1/comparison/ (local Excel/CSV)
+    salud-phase1 trial --version assist-v3   # another prompt version beside the dashboard's, both vs the tags
 
 Settings come from .env: DATABASE_URL (team database), GROQ_API_KEY / GROQ_MODEL (only `analyze` uses the LLM).
 """
@@ -18,7 +19,7 @@ import argparse
 import sys
 
 from ..llm_client import LLMEndpoint
-from ..paths import COMPARISON, LLM_CACHE
+from ..paths import AI_VERSIONS, COMPARISON, LLM_CACHE
 from .assign import rater_name
 from .store import Store, as_label_frame
 
@@ -137,6 +138,57 @@ def cmd_compare(args) -> None:
     print(f"Saved {xlsx}\n  plus CSVs and summary.md in {COMPARISON}")
 
 
+def cmd_trial(args) -> None:
+    from . import compare
+    from .prompt import PROMPT_VERSION, CallAssistant
+    from .trial import run
+
+    ep = LLMEndpoint()
+    if not ep.model:
+        sys.exit("No LLM configured: set GROQ_API_KEY in .env")
+    ep.max_retries = 8
+    store = Store()
+    base = store.ai_info()
+    if not base["analyzed"] or base["mixed"]:
+        sys.exit("The dashboard's analyses are missing or mix model/prompt versions, so there is no single baseline "
+                 "to compare against. Nothing was changed.")
+    version = args.version
+    if version == PROMPT_VERSION or (ep.model, version) == (base["model"], base["prompt_version"]):
+        sys.exit(f"{ep.model} / {version} is the dashboard's version; choose another --version.")
+    print(f"Trial: {ep.provider} / {ep.model} (prompt {version}) on {args.source} calls"
+          + (" (real calls are sent to this provider)" if args.source != "synthetic" else ""))
+    out = AI_VERSIONS / version
+    c = run(store, CallAssistant(ep, LLM_CACHE, version), out.with_suffix(".json"), source=args.source,
+            limit=args.limit)
+    print(f"\n{c['stored_total']} of {c['calls']} calls stored for {version}: {c['new_llm_requests']} new LLM "
+          f"requests, {c['from_cache']} from cache, {c['already_stored']} already stored, {c['failed']} failed")
+    if c["not_done"]:
+        print(f"  {c['not_done']} calls left ({c['stopped_early'] or 'limit reached'}). Run `salud-phase1 trial` again.")
+
+    # Score both versions on exactly the same calls: those with a trial analysis AND a dashboard analysis.
+    trial = store.ai_versions(ep.model, version)
+    baseline = store.ai_analyses()
+    common = trial.keys() & baseline.keys()
+    if not common:
+        sys.exit("No call has both a trial and a dashboard analysis yet; nothing to compare.")
+    calls = [x for x in store.calls() if x["call_id"] in common]
+    labels, planted = as_label_frame(store.tags()), store.planted()
+    rows = []
+    for name, analyses in ((f"{base['prompt_version']} (dashboard)", baseline), (version, trial)):
+        r = compare.build(calls, labels, {k: v for k, v in analyses.items() if k in common}, planted)
+        if name == version:
+            compare.write(r, out)
+        a = r["agreement"]
+        a = a[a["group"] == "All tagged calls"].set_index("target")["agreement"].rename(name)
+        rows.append(a)
+    import pandas as pd
+    table = pd.concat(rows, axis=1)
+    table["change"] = table.iloc[:, 1] - table.iloc[:, 0]
+    print(f"\nAgreement with reviewers' final answers on the same {len(calls)} calls:")
+    print(table.round(2).to_string())
+    print(f"\nSaved {out.with_suffix('.json')} and the full comparison in {out}/")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="salud-phase1", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -160,9 +212,15 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("compare", help="route 2, step 2: AI vs every rater's tags -> Excel + CSV")
 
+    t = sub.add_parser("trial", help="another prompt version beside the dashboard's, both vs the tags")
+    t.add_argument("--version", default="assist-v3", help="prompt version to try (default: assist-v3)")
+    t.add_argument("--source", choices=["synthetic", "real", "all"], default="synthetic")
+    t.add_argument("--limit", type=int, help="maximum new LLM requests this run")
+
     args = ap.parse_args(argv)
     try:
-        {"dashboard": cmd_dashboard, "process": cmd_process, "assign": cmd_assign, "analyze": cmd_analyze, "compare": cmd_compare}[args.cmd](args)
+        {"dashboard": cmd_dashboard, "process": cmd_process, "assign": cmd_assign, "analyze": cmd_analyze, "compare": cmd_compare,
+         "trial": cmd_trial}[args.cmd](args)
     except RuntimeError as e:
         sys.exit(f"Error: {e}")
     return 0

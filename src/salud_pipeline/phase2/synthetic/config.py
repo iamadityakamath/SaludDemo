@@ -35,6 +35,62 @@ class OutcomeModel:
 
 
 @dataclass
+class Realism:
+    """Knobs that make the world look like Salud's final package (Nov 2026). Only used when GeneratorConfig.realism
+    is set; without it the generator behaves exactly as before. Values are tuned with `salud-synth-calibrate`.
+
+    Main differences from the original world:
+    - accounts per patient are heavy-tailed (negative binomial), balances smaller, visits spread over time;
+    - insurance processing: insurance payments and adjustments shortly after discharge (more likely for able payers);
+    - payments follow a *habit* process instead of a planted outcome model: a patient who starts paying usually keeps
+      paying monthly; starting becomes likelier as the debt ages (statements accumulate, insurance is settled). The
+      same process runs before and after the cutoff, so every scoring date carries the same relationships;
+    - calls: more inbound calls, outbound campaign calls mostly answered by the phone menu (IVR), a share of inbound
+      calls transferred to another department, few messages left.
+    """
+
+    # accounts and balances
+    accounts_extra_mean: float = 3.9       # accounts per patient = 1 + NegBin(mean, dispersion), capped
+    accounts_dispersion: float = 0.45
+    max_accounts: int = 40
+    visit_spread_days: int = 420           # a patient's later visits fall up to this long after the first
+    hb_share: float = 0.48
+    hb_balance_mu: float = 5.25            # lognormal placement balance per account
+    hb_balance_sd: float = 1.6
+    pb_balance_mu: float = 4.45
+    pb_balance_sd: float = 1.4
+    # insurance processing (per account, around discharge + 55..110 days)
+    insurance_payment_p: float = 0.08
+    adjustment_p: float = 0.12
+    insurance_ability_slope: float = 1.0   # insured / processed accounts are likelier for able payers
+    # payment habit (monthly)
+    start_intercept: float = -4.2
+    start_ability: float = 2.2
+    start_willingness: float = 1.2
+    start_age: float = 0.55                # per log1p(months since first placement)
+    continue_intercept: float = 0.6
+    continue_ability: float = 1.8
+    plan_fraction_low: float = 0.08        # monthly amount as a share of the open balance
+    plan_fraction_high: float = 0.3
+    call_to_habit: float = 0.6             # payment / plan / kept promise on a call -> starts the habit
+    # calls
+    inbound_scale: float = 1.0             # multiplies the willingness-driven inbound call rate
+    campaign_share: float = 0.74           # connected outbound calls that come from a campaign
+    campaign_ivr_share: float = 0.88       # campaign calls answered by the phone menu (no agent)
+    message_left_share: float = 0.08       # unanswered calls where a message was left
+    transfer_rate: float = 0.3             # inbound agent calls transferred to another department
+    other_contact_rate: float = 0.08       # non-transferred agent calls with contact type 'Other'
+    hardship_scale: float = 0.4            # weight of the hardship scenario
+    dispute_itemized_p: float = 0.3        # disputes where an itemized bill is sent
+    talk_mu: float = 5.35                  # lognormal agent talk time
+    result_offsets: dict = field(default_factory=dict)   # added to the call-result logits, e.g. {"non_committal": -0.5}
+    inbound_pay_offset: float = 0.0        # inbound callers: added to the pay / promise / plan result logits
+    ptp_keep_scale: float = 1.0            # multiplies the chance a promise to pay is kept
+    outbound_skip_paying: float = 0.0      # collections campaigns skip patients who are currently paying
+    pay_by_phone: float = 0.0              # a paying patient makes the month's payment by calling in
+
+
+@dataclass
 class GeneratorConfig:
     seed: int = 7
     n_guarantors: int = 2000
@@ -64,16 +120,18 @@ class GeneratorConfig:
     transcript_noise: float = 0.15        # ASR-style fillers, masking and dropped words
 
     outcome: OutcomeModel = field(default_factory=OutcomeModel)
+    realism: Realism | None = None
 
     @classmethod
     def from_json(cls, path: str | Path) -> "GeneratorConfig":
         raw = json.loads(Path(path).read_text())
         outcome = OutcomeModel(**raw.pop("outcome", {}))
+        realism = Realism(**raw.pop("realism")) if "realism" in raw else None
         known = {f.name for f in fields(cls)}
         unknown = set(raw) - known
         if unknown:
             raise ValueError(f"Unknown config keys: {sorted(unknown)}")
-        return cls(**raw, outcome=outcome)
+        return cls(**raw, outcome=outcome, realism=realism)
 
     def to_dict(self) -> dict:
         return asdict(self)

@@ -109,6 +109,8 @@ class World:
     account_truth: list[dict] = field(default_factory=list)
     # guarantor id -> [(time, contact id)] of outbound calls, for receipts.LastOutboundCall
     outbound_calls: dict[str, list[tuple[pd.Timestamp, str]]] = field(default_factory=dict)
+    # realism mode: guarantor id -> payment habit state {"paying": bool}
+    habit: dict[str, dict] = field(default_factory=dict)
 
     # ---------- helpers ----------
     def uid(self) -> str:
@@ -182,17 +184,32 @@ def build_guarantors_and_accounts(w: World, history_start: pd.Timestamp) -> None
             do_not_call=bool(rng.random() < cfg.do_not_call_rate),
         )
         w.guarantors.append(g)
-        n_acc = 1 + int(rng.poisson(max(cfg.mean_accounts_per_guarantor - 1, 0)))
-        for _ in range(n_acc):
-            hbpb = S.HB if rng.random() < 0.6 else S.PB
-            discharge = w.rand_time(history_start - pd.Timedelta(days=120),
-                                    latest_placement - pd.Timedelta(days=20), business_hours=False).normalize()
+        R = cfg.realism
+        if R:
+            p_nb = R.accounts_dispersion / (R.accounts_dispersion + R.accounts_extra_mean)
+            n_acc = 1 + min(int(rng.negative_binomial(R.accounts_dispersion, p_nb)), R.max_accounts - 1)
+            first_discharge = w.rand_time(history_start - pd.Timedelta(days=120),
+                                          latest_placement - pd.Timedelta(days=20), business_hours=False).normalize()
+        else:
+            n_acc = 1 + int(rng.poisson(max(cfg.mean_accounts_per_guarantor - 1, 0)))
+        for i_acc in range(n_acc):
+            hbpb = S.HB if rng.random() < (R.hb_share if R else 0.6) else S.PB
+            if R:  # later visits of the same patient follow the first one
+                later = 0 if i_acc == 0 else int(rng.integers(0, R.visit_spread_days))
+                discharge = min(first_discharge + pd.Timedelta(days=later), latest_placement - pd.Timedelta(days=20))
+            else:
+                discharge = w.rand_time(history_start - pd.Timedelta(days=120),
+                                        latest_placement - pd.Timedelta(days=20), business_hours=False).normalize()
             placement = min(discharge + pd.Timedelta(days=int(rng.integers(20, 91))), latest_placement).normalize()
             last_placement = placement
             if rng.random() < 0.08:
                 last_placement = min(placement + pd.Timedelta(days=int(rng.integers(30, 120))), latest_placement)
-            mu, sd = (6.4, 1.0) if hbpb == S.HB else (5.1, 0.8)
-            bal = round(float(np.clip(rng.lognormal(mu, sd), 25, 60000)), 2)
+            if R:
+                mu, sd = (R.hb_balance_mu, R.hb_balance_sd) if hbpb == S.HB else (R.pb_balance_mu, R.pb_balance_sd)
+                bal = round(float(np.clip(rng.lognormal(mu, sd), 10, 30000)), 2)
+            else:
+                mu, sd = (6.4, 1.0) if hbpb == S.HB else (5.1, 0.8)
+                bal = round(float(np.clip(rng.lognormal(mu, sd), 25, 60000)), 2)
             pool = FIN_CLASSES_HARDSHIP if hardship else FIN_CLASSES_STD
             a = Account(aid=w.uid(), gid=g.gid, hbpb=hbpb, fin_class=pool[int(rng.integers(len(pool)))],
                         discharge=discharge, placement=placement, last_placement=last_placement,
@@ -202,14 +219,14 @@ def build_guarantors_and_accounts(w: World, history_start: pd.Timestamp) -> None
 
 # ---------- calls ----------
 
-def _pick_scenario(rng, g: Guarantor, inbound: bool) -> str:
-    if inbound and rng.random() < 0.05:
+def _pick_scenario(rng, g: Guarantor, inbound: bool, R=None) -> str:
+    if inbound and rng.random() < (0.025 if R else 0.05):
         return "third_party"
     weights = {
         "wants_to_pay": 0.15 + 0.35 * g.willingness * g.ability,
         "billing_question": 0.30,
         "insurance_issue": 0.20,
-        "hardship": 0.05 + (0.55 if g.hardship else 0.0),
+        "hardship": (0.05 + (0.55 if g.hardship else 0.0)) * (R.hardship_scale if R else 1.0),
         "dispute": 0.05 + 0.25 * (1 - g.willingness),
     }
     keys = list(weights)
@@ -217,8 +234,9 @@ def _pick_scenario(rng, g: Guarantor, inbound: bool) -> str:
     return keys[int(rng.choice(len(keys), p=p / p.sum()))]
 
 
-def _true_result(rng, g: Guarantor, scenario: str, qz: float, hung_up: bool) -> str:
-    if scenario == "third_party":
+def _true_result(rng, g: Guarantor, scenario: str, qz: float, hung_up: bool, offsets: dict | None = None,
+                 pay_offset: float = 0.0) -> str:
+    if scenario in ("third_party", "transfer"):
         return "na_transferred"
     if hung_up:
         return "would_not_pay" if rng.random() < 0.4 else "non_committal"
@@ -242,6 +260,11 @@ def _true_result(rng, g: Guarantor, scenario: str, qz: float, hung_up: bool) -> 
     if scenario == "hardship":
         logits["paid_plan_full"] += 1.0
         logits["paid_account_full"] -= 1.5
+    for k, v in (offsets or {}).items():
+        if k in logits:
+            logits[k] += v
+    for k in ("paid_account_full", "partial_payment", "promised_to_pay", "paid_plan_full"):
+        logits[k] += pay_offset
     keys = list(logits)
     z = np.array([logits[k] for k in keys])
     p = np.exp(z - z.max())
@@ -261,23 +284,35 @@ def _misstatus(rng, true_result: str) -> str | None:
 
 
 def simulate_connected_call(w: World, g: Guarantor, when: pd.Timestamp, direction: str,
-                            accts: list[Account], cid: str, events: list) -> dict:
-    """Create the CRM fields for a connected call and the hidden truth row."""
+                            accts: list[Account], cid: str, events: list, phone_payment: tuple | None = None) -> dict:
+    """Create the CRM fields for a connected call and the hidden truth row.
+    phone_payment=(account, amount): realism mode, a paying patient calling in to make this month's payment."""
     rng = w.rng
+    R = w.cfg.realism
     agent = w.agents[int(rng.integers(len(w.agents)))]
     inbound = direction.startswith("inbound")
-    scenario = _pick_scenario(rng, g, inbound)
+    if phone_payment:
+        scenario = "wants_to_pay"
+    elif R and inbound and rng.random() < R.transfer_rate:
+        scenario = "transfer"   # needs another department (provider office, insurance, billing office)
+    else:
+        scenario = _pick_scenario(rng, g, inbound, R)
 
     items = {k: bool(rng.random() < agent.item_p[k]) for k in S.QA_KEYS}
     # Context makes some items harder: disputes and insurance issues are harder to close on one call.
-    if scenario in ("dispute", "insurance_issue", "third_party") and rng.random() < 0.35:
+    if scenario in ("dispute", "insurance_issue", "third_party", "transfer") and rng.random() < 0.35:
         items["first_contact_resolution"] = False
     transcript_items = [k for k in S.QA_KEYS if k not in ("call_statusing", "grammar")]
     quality = float(np.mean([items[k] for k in S.QA_KEYS]))
     qz = (quality - 0.75) / 0.18
 
-    hung_up = bool(scenario != "third_party" and rng.random() < 0.10 * (1.5 - g.willingness) * (1.6 - quality))
-    result = _true_result(rng, g, scenario, qz, hung_up)
+    hung_up = bool(not phone_payment and scenario not in ("third_party", "transfer")
+                   and rng.random() < 0.10 * (1.5 - g.willingness) * (1.6 - quality))
+    if phone_payment:
+        result = "paid_plan_full" if rng.random() < 0.5 else "paid_account_full"
+    else:
+        result = _true_result(rng, g, scenario, qz, hung_up, R.result_offsets if R else None,
+                              R.inbound_pay_offset if (R and inbound) else 0.0)
     sentiment = float(np.tanh(1.6 * (g.willingness - 0.55) + 0.6 * qz
                               + (-0.8 if result in ("contested_balance", "would_not_pay") else 0.0)
                               + (0.5 if result.startswith("paid") else 0.0)
@@ -288,25 +323,33 @@ def simulate_connected_call(w: World, g: Guarantor, when: pd.Timestamp, directio
     total_bal = round(sum(a.balance for a in open_accts), 2)
 
     actions: list[str] = []
-    if scenario != "third_party":
+    if scenario != "third_party" and not (R and scenario == "transfer" and rng.random() < 0.3):
         actions.append("shared_balance")
     if scenario == "hardship" or (g.hardship and items["understanding_needs"]):
         if items["understanding_needs"]:
             actions += ["provided_fa_options", "fa_paperwork_sent"]
     if scenario == "insurance_issue" or result == "pursued_insurance":
         actions.append("requested_insurance_review")
-    if scenario == "dispute" or result == "contested_balance":
+    if (scenario == "dispute" or result == "contested_balance") and (not R or rng.random() < R.dispute_itemized_p):
         actions.append("provided_itemized")
     if result == "paid_plan_full":
         actions.append("set_up_plan")
-    if items["capturing_data"]:
+    if items["capturing_data"] and (not R or rng.random() < 0.08):
         actions.append("updated_contact_info")
     actions = list(dict.fromkeys(actions))
 
     # Money on the call.
     pay_now = 0.0
     promise_date = None
-    if open_accts and result in ("paid_account_full", "partial_payment", "paid_plan_full"):
+    if phone_payment:   # the habit's monthly payment, taken on the call
+        acct, amount = phone_payment
+        pay_now = round(min(amount, acct.balance), 2)
+        heapq.heappush(events, (when + pd.Timedelta(hours=int(rng.integers(1, 30))), "pay", acct.aid, pay_now))
+        if pay_now >= acct.balance - 0.005 and result == "paid_account_full" and len(open_accts) == 1:
+            result = "paid_guarantor_full"
+        elif pay_now < acct.balance - 0.005:
+            result = "paid_plan_full"
+    elif open_accts and result in ("paid_account_full", "partial_payment", "paid_plan_full"):
         post_at = when + pd.Timedelta(hours=int(rng.integers(1, 30)))
         if result == "paid_account_full":
             target = open_accts if rng.random() < 0.5 else [open_accts[0]]
@@ -330,8 +373,10 @@ def simulate_connected_call(w: World, g: Guarantor, when: pd.Timestamp, directio
     if result == "promised_to_pay" and open_accts:
         days = int(rng.integers(3, 22))
         promise_date = (when + pd.Timedelta(days=days)).strftime("%m/%d")
-        p_keep = 0.35 + 0.35 * g.ability + 0.2 * g.willingness
+        p_keep = (0.35 + 0.35 * g.ability + 0.2 * g.willingness) * (R.ptp_keep_scale if R else 1.0)
         if rng.random() < p_keep:
+            if R and rng.random() < R.call_to_habit:
+                w.habit.setdefault(g.gid, {"paying": False})["paying"] = True
             a = open_accts[0]
             frac = 1.0 if rng.random() < 0.5 * g.ability + 0.2 else float(rng.uniform(0.2, 0.7))
             heapq.heappush(events, (when + pd.Timedelta(days=days + int(rng.integers(-2, 4))),
@@ -352,13 +397,20 @@ def simulate_connected_call(w: World, g: Guarantor, when: pd.Timestamp, directio
     if not items["first_contact_resolution"] and (scenario in ("third_party", "insurance_issue") or rng.random() < 0.3):
         transferred = "provider" if scenario == "third_party" else ("billing_office" if rng.random() < 0.6 else "supervisor")
     collection_attempt = scenario != "third_party" and (not inbound or rng.random() < 0.85)
-    talk = float(np.clip(rng.lognormal(5.6 + 0.3 * (scenario in ("dispute", "insurance_issue")), 0.45), 45, 2400))
+    talk = float(np.clip(rng.lognormal((R.talk_mu if R else 5.6) + 0.3 * (scenario in ("dispute", "insurance_issue")), 0.45), 45, 2400))
     if hung_up:
         talk = float(rng.uniform(20, 120))
 
     contact_type = "patient" if g.caller_type == "patient" else "non_patient_guarantor"
     if scenario == "third_party":
         contact_type = "insurance"
+    if R and scenario == "transfer":
+        contact_type = str(rng.choice(["patient", "other", "insurance"], p=[0.55, 0.40, 0.05]))
+    elif R and scenario != "third_party" and rng.random() < R.other_contact_rate:
+        contact_type = "other"
+    if R and open_accts and result in ("paid_account_full", "paid_guarantor_full", "partial_payment", "paid_plan_full") \
+            and rng.random() < R.call_to_habit:
+        w.habit.setdefault(g.gid, {"paying": False})["paying"] = True
 
     for a in accts:
         a.last_connect = when
@@ -445,12 +497,15 @@ def simulate_history(w: World, g: Guarantor) -> None:
     for _ in range(n_attempts):
         heapq.heappush(events, (w.rand_time(first + pd.Timedelta(days=3), w.cutoff - pd.Timedelta(days=1)),
                                 "contact", "", 0.0))
+    R = cfg.realism
     # Patient-initiated inbound calls scale with willingness.
-    for _ in range(int(rng.poisson(0.4 + 1.2 * g.willingness))):
+    for _ in range(int(rng.poisson((0.4 + 1.2 * g.willingness) * (R.inbound_scale if R else 1.0)))):
         heapq.heappush(events, (w.rand_time(first + pd.Timedelta(days=5), w.cutoff - pd.Timedelta(days=1)),
                                 "inbound", "", 0.0))
-    # Spontaneous (statement-driven) payments.
-    for a in accts:
+    if R:
+        _schedule_realism(w, g, accts, first, events)
+    # Spontaneous (statement-driven) payments (original world only; realism uses the monthly habit instead).
+    for a in ([] if R else accts):
         months = max((w.cutoff - a.placement).days / 30.0, 0.0)
         lam = months * 0.10 * float(_sigmoid(-1.0 + 2.5 * g.ability + 1.0 * g.willingness - 0.25 * np.log1p(a.balance) + 1.0))
         for _ in range(int(rng.poisson(lam))):
@@ -472,11 +527,13 @@ def simulate_history(w: World, g: Guarantor) -> None:
                 w.post(a, when, a.balance * frac, S.TXN_PAYMENT, S.PAY_PATIENT)
         elif kind == "pay":
             a = w.accounts[aid]
-            if when <= w.cutoff:  # post-cutoff money comes only from the outcome model
+            if when <= w.cutoff or R:  # original world: post-cutoff money comes only from the outcome model
                 w.post(a, when, min(amount, a.balance), S.TXN_PAYMENT, S.PAY_PATIENT)
+        elif kind == "month":
+            _habit_month(w, g, accts, when, events)
         elif kind == "plan":
             a = w.accounts[aid]
-            if when > w.cutoff or a.balance <= 0:
+            if (when > w.cutoff and not R) or a.balance <= 0:
                 continue
             if rng.random() < 0.55 + 0.35 * g.ability * (0.5 + g.willingness):
                 w.post(a, when, min(amount, a.balance), S.TXN_PAYMENT, S.PAY_PATIENT)
@@ -494,6 +551,68 @@ def simulate_history(w: World, g: Guarantor) -> None:
         elif kind == "ins_pay":
             a = w.accounts[aid]
             w.post(a, when, min(amount, a.balance), S.TXN_PAYMENT, S.PAY_INSURANCE)
+        elif kind == "ins_adj":   # contractual adjustment from insurance processing (realism mode)
+            a = w.accounts[aid]
+            w.post(a, when, min(amount, a.balance), S.TXN_ADJUSTMENT, S.PAY_INSURANCE)
+
+
+def _schedule_realism(w: World, g: Guarantor, accts: list[Account], first: pd.Timestamp, events: list) -> None:
+    """Realism mode: insurance processing per account, and a monthly payment-habit tick from the first placement
+    to the end of the outcome window (the same process before and after the cutoff)."""
+    rng, R = w.rng, w.cfg.realism
+    lift = R.insurance_ability_slope * (g.ability - 0.5)
+    for a in accts:
+        when = max(a.discharge + pd.Timedelta(days=int(rng.integers(55, 111))),
+                   a.placement + pd.Timedelta(days=int(rng.integers(1, 15)))) + pd.Timedelta(hours=int(rng.integers(8, 18)))
+        if rng.random() < R.insurance_payment_p * np.exp(lift):
+            heapq.heappush(events, (when, "ins_pay", a.aid, round(a.balance * float(rng.uniform(0.1, 0.6)), 2)))
+        for _ in range(int(rng.random() < R.adjustment_p * np.exp(lift)) * (1 + int(rng.poisson(1.5)))):
+            heapq.heappush(events, (when + pd.Timedelta(days=int(rng.integers(0, 20))), "ins_adj", a.aid,
+                                    round(a.balance * float(rng.uniform(0.02, 0.25)), 2)))
+    w.habit.setdefault(g.gid, {"paying": False})
+    t = first + pd.Timedelta(days=int(rng.integers(20, 40)))
+    while t <= w.window_end:
+        heapq.heappush(events, (t + pd.Timedelta(hours=int(rng.integers(0, 24))), "month", "", 0.0))
+        t = t + pd.Timedelta(days=30)
+
+
+def _habit_month(w: World, g: Guarantor, accts: list[Account], when: pd.Timestamp, events: list) -> None:
+    """One month of the payment habit: a paying patient pays and usually keeps paying; a non-paying patient starts
+    with a probability that grows with the age of the debt."""
+    rng, R = w.rng, w.cfg.realism
+    h = w.habit[g.gid]
+    open_accts = [a for a in accts if a.balance > 0 and a.placement <= when]
+    if not open_accts:
+        return
+    months = max((when - min(a.placement for a in open_accts)).days / 30.0, 0.0)
+    if not h["paying"]:
+        z = (R.start_intercept + R.start_ability * g.ability + R.start_willingness * g.willingness
+             + R.start_age * np.log1p(months) - (1.0 if g.hardship else 0.0))
+        h["paying"] = bool(rng.random() < _sigmoid(z))
+        if not h["paying"]:
+            return
+    a = min(open_accts, key=lambda x: x.placement)
+    amount = a.balance * float(rng.uniform(R.plan_fraction_low, R.plan_fraction_high)) if a.balance > 30 else a.balance
+    if when <= w.cutoff and rng.random() < R.pay_by_phone:
+        _phone_payment(w, g, accts, open_accts, when, a, amount, events)
+    else:
+        w.post(a, when, amount, S.TXN_PAYMENT, S.PAY_PATIENT)
+    if rng.random() > _sigmoid(R.continue_intercept + R.continue_ability * g.ability):
+        h["paying"] = False
+
+
+def _phone_payment(w: World, g: Guarantor, accts, open_accts, when, acct, amount, events) -> None:
+    """A paying patient calls in and pays this month's amount on the phone (recorded inbound call)."""
+    rng = w.rng
+    covered = open_accts if rng.random() < 0.85 else [acct]
+    cid = w.uid()
+    direction = "inbound_returned" if rng.random() < 0.25 else "inbound"
+    row = simulate_connected_call(w, g, when, direction, covered, cid, events, phone_payment=(acct, amount))
+    w.contacts.append(row)
+    for a in covered:
+        w.bridge.append({"salud_gphpvaccountsid": a.aid, "salud_gphpvcontacthistoryid": cid})
+    if rng.random() < w.cfg.qa_review_rate:
+        _qa_review(w, row, w.call_truth[-1])
 
 
 def _contact_event(w: World, g: Guarantor, accts: list[Account], when: pd.Timestamp, kind: str, events: list) -> None:
@@ -501,6 +620,9 @@ def _contact_event(w: World, g: Guarantor, accts: list[Account], when: pd.Timest
     open_accts = [a for a in accts if a.balance > 0 and a.placement <= when]
     if not open_accts:
         return
+    R = w.cfg.realism
+    if R and kind == "contact" and w.habit.get(g.gid, {}).get("paying") and rng.random() < R.outbound_skip_paying:
+        return   # collections outreach targets patients who aren't paying
     covered = open_accts if rng.random() < 0.85 else [open_accts[int(rng.integers(len(open_accts)))]]
     cid = w.uid()
 
@@ -515,13 +637,27 @@ def _contact_event(w: World, g: Guarantor, accts: list[Account], when: pd.Timest
             connected = rng.random() < 0.15 + 0.55 * g.reachability
             for a in covered:
                 a.last_attempt = when
+            R = w.cfg.realism
             if connected:
-                direction = "outbound_manual" if rng.random() < 0.5 else "outbound_campaign"
+                u = rng.random()
+                campaign = u < R.campaign_share if R else u >= 0.5   # original: u < 0.5 -> manual
+                direction = "outbound_campaign" if campaign else "outbound_manual"
                 w.outbound_calls.setdefault(g.gid, []).append((when, cid))
-                row = simulate_connected_call(w, g, when, direction, covered, cid, events)
+                if R and campaign and rng.random() < R.campaign_ivr_share:
+                    ivr = "spanish_ivr" if g.language == "spanish" else "english_ivr"
+                    row = _blank_contact(cid, g, when, "outbound_campaign", ivr)
+                    row["salud_AgentCallTalkDuration"] = round(float(rng.uniform(20, 36)), 1)
+                    row["salud_Note"] = f"PayVow call attempted. The call was statused as: Sent to {'Spanish' if ivr == 'spanish_ivr' else 'English'} IVR"
+                else:
+                    row = simulate_connected_call(w, g, when, direction, covered, cid, events)
             else:
                 w.outbound_calls.setdefault(g.gid, []).append((when, cid))
-                disp = NO_CONNECT_DISPOSITIONS[int(rng.integers(len(NO_CONNECT_DISPOSITIONS)))]
+                if w.cfg.realism:
+                    msg = rng.random() < w.cfg.realism.message_left_share
+                    pool = ["vm_left_message", "left_message_with_person"] if msg else ["busy", "vm_no_message", "no_answer", "invalid_number"]
+                    disp = pool[int(rng.integers(len(pool)))]
+                else:
+                    disp = NO_CONNECT_DISPOSITIONS[int(rng.integers(len(NO_CONNECT_DISPOSITIONS)))]
                 manual = rng.random() < 0.3
                 row = _blank_contact(cid, g, when, "outbound_no_connection", disp)
                 row["salud_Agent"] = w.agents[int(rng.integers(len(w.agents)))].name if manual else None
@@ -557,6 +693,26 @@ def _blank_contact(cid: str, g: Guarantor, when: pd.Timestamp, ctype: str, disp:
 
 
 # ---------- outcome window ----------
+
+def realism_outcomes(w: World) -> None:
+    """Realism mode: no planted logistic; the outcome is whatever the habit process produced in the window.
+    Truth rows record the balance at the cutoff and whether a counted patient payment followed."""
+    paid_in_window, before = {}, {}
+    for r in w.receipts:
+        if r["salud_ExcludeTransaction"] != S.TXN_INCLUDE:
+            continue
+        aid, t = r["salud_ReceiptsId"], r["salud_PostDate"]
+        if t <= w.cutoff:
+            before[aid] = before.get(aid, 0.0) + r["salud_Amount"]
+        elif t <= w.window_end and r["salud_TXNType"] == S.TXN_PAYMENT and r["salud_PaymentType"] == S.PAY_PATIENT:
+            paid_in_window[aid] = True
+    for a in w.accounts.values():
+        bal = round(a.placement_balance - before.get(a.aid, 0.0), 2)
+        open_ = a.placement <= w.cutoff and bal > 0.005
+        w.account_truth.append({"account_id": a.aid, "guarantor_id": a.gid, "open_at_cutoff": open_,
+                                "balance_at_cutoff": bal if open_ else 0.0, "planted_logit": None, "planted_p": None,
+                                "planted_paid": bool(paid_in_window.get(a.aid, False)) if open_ else None})
+
 
 def simulate_outcomes(w: World, glookup: dict[str, Guarantor]) -> None:
     rng, cfg, oc = w.rng, w.cfg, w.cfg.outcome
@@ -678,8 +834,12 @@ def generate(cfg: GeneratorConfig) -> dict[str, pd.DataFrame]:
     for g in w.guarantors:
         simulate_history(w, g)
     glookup = {g.gid: g for g in w.guarantors}
-    simulate_outcomes(w, glookup)
-    _add_filter_traps(w)
+    if cfg.realism:
+        _add_filter_traps(w)   # before the outcome truth, so labels see exactly the posted receipts
+        realism_outcomes(w)
+    else:                      # original order, so the original world reproduces exactly
+        simulate_outcomes(w, glookup)
+        _add_filter_traps(w)
 
     def frame(rows, table):
         return pd.DataFrame(rows, columns=S.COLUMNS[table])
