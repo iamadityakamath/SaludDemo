@@ -81,6 +81,9 @@ Newest entries go at the top of each section. (Kept up to date with every task; 
 
 ## Tooling
 
+- **Network timeouts are `OSError`, not `RuntimeError`.** A long LLM run crashed on a read timeout. Catch `OSError` too,
+  cache each result as it arrives, and check a new API key with one cheap request (`GET /models`) before a long run.
+
 - **A trial must not change the live default.** Bumping `PROMPT_VERSION` for a trial silently moved the dashboard to the
   trial prompt. Pass the version as a parameter (`CallAssistant(..., version)`, `trial --version`). When refactoring a
   prompt, compare the built text byte for byte with the old one so the LLM cache stays valid.

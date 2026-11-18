@@ -5,6 +5,26 @@ first. Kept up to date with every task.
 
 ---
 
+## 2026-11-18 · Stage 1 QA on Salud's 84 real calls
+
+**Result:**
+- all 84 real calls scored with the dashboard's prompt (assist-v2, Groq);
+- the real QA score alone ranks payment after the call at AUC 0.59 (0.42–0.75, 47 rows), and it adds nothing to the post-call model (0.680 → 0.684).
+
+**Decided:**
+- ran the QA only after the user's explicit go-ahead, because it sends the transcripts to Groq;
+- kept the results local (`reports/phase2/qa_real.csv`, gitignored), with nothing written to the shared database;
+- reused the dashboard's prompt and its QA-score formula, so the scores mean the same as on the dashboard.
+
+**Went well:** every review is cached, so the run resumed after a network timeout and after two key changes without
+repeating any request.
+
+**Would do differently:**
+- the first run crashed on a network timeout because I caught only `RuntimeError` and `ValueError`. Provider calls should also treat `OSError` as a clean stop;
+- check a new API key with one cheap request before starting a long run.
+
+---
+
 ## 2026-11-18 · Clearing the pending items (code-review fixes, migration 008, cleanups, commit)
 
 **Decided:**

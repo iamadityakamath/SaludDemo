@@ -209,7 +209,7 @@ def open_balance(snap: pd.DataFrame) -> pd.DataFrame:
     return snap[(snap["n_accounts"] > 0) & (snap["balance_at_t"] > 0)].reset_index(drop=True)
 
 
-# ---------- call-level extras: sentiment (local model) and synthetic QA ----------
+# ---------- call-level extras: sentiment (local model), real QA (LLM) and synthetic QA ----------
 
 def score_sentiment(world: World, cache: Path) -> pd.DataFrame:
     """Caller/agent sentiment per call, from the local ONNX model. Cached per world, since synthetic takes a while."""
@@ -236,3 +236,60 @@ def score_sentiment(world: World, cache: Path) -> pd.DataFrame:
 def synthetic_qa(world_dir: Path) -> pd.Series:
     truth = pd.read_csv(world_dir / "truth" / "truth_calls.csv", usecols=["contact_id", "quality_score_transcript_items"])
     return truth.set_index("contact_id")["quality_score_transcript_items"]
+
+
+def score_qa(world: World, out_csv: Path, limit: int | None = None) -> pd.DataFrame:
+    """Stage 1 QA of each call with the dashboard's prompt (phase1.prompt, live version) through the configured LLM.
+
+    Sends the redacted transcripts to the LLM provider. Every review is cached in the phase1 LLM cache (keyed by
+    model, prompt version and transcript), so a run stopped by the provider's daily limit resumes where it ended.
+    Writes one row per call to out_csv (local, gitignored): the QA score (Yes / (Yes + No) over the transcript items,
+    as on the dashboard), each item's answer, and the AI's outcome and sentiment labels. Nothing goes to the database.
+    """
+    from ...llm_client import LLMEndpoint
+    from ...paths import LLM_CACHE
+    from ...phase1.checklist import TRANSCRIPT_ITEMS
+    from ...phase1.compare import call_quality
+    from ...phase1.prompt import PROMPT_VERSION, CallAssistant
+
+    ep = LLMEndpoint()
+    if not ep.model:
+        raise RuntimeError("No LLM configured: set GROQ_API_KEY in .env")
+    ep.max_retries = 8
+    assistant = CallAssistant(ep, LLM_CACHE)
+    rows, counts = [], {"from_cache": 0, "new_llm_requests": 0, "failed": 0, "not_done": 0}
+    stopped = None
+    for i, (cid, text) in enumerate(sorted(world.transcripts.items()), 1):
+        a = assistant.cached(text)
+        if a is not None:
+            counts["from_cache"] += 1
+        elif stopped or (limit is not None and counts["new_llm_requests"] >= limit):
+            counts["not_done"] += 1
+            continue
+        else:
+            try:
+                a = assistant.review(text)
+                counts["new_llm_requests"] += 1
+            except (RuntimeError, ValueError, OSError) as e:   # OSError covers network timeouts
+                stopped = f"{type(e).__name__}: {e}"[:200]
+                counts["failed"] += 1
+                counts["not_done"] += 1
+                print(f"  stopping: {stopped}")
+                continue
+            if not a.get("ok"):
+                counts["failed"] += 1
+                print(f"  call {i}: the reply could not be parsed; will retry next run")
+                continue
+        answers = {k: ((a.get("checklist") or {}).get(k) or {}).get("answer") for k in TRANSCRIPT_ITEMS}
+        rows.append({"call_id": cid, "qa_score": call_quality(answers), **{f"qa_{k}": v for k, v in answers.items()},
+                     "ai_outcome": (a.get("outcome") or {}).get("label"),
+                     "ai_sentiment": (a.get("sentiment") or {}).get("label"),
+                     "model": ep.model, "prompt_version": PROMPT_VERSION})
+        print(f"  QA {len(rows)}/{len(world.transcripts)}", flush=True)
+    done = pd.DataFrame(rows)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    done.to_csv(out_csv, index=False)
+    print(f"{len(done)} of {len(world.transcripts)} calls scored ({ep.model} / {PROMPT_VERSION}): "
+          f"{counts['new_llm_requests']} new LLM requests, {counts['from_cache']} from cache, {counts['failed']} failed"
+          + (f"; {counts['not_done']} left, run again later" if counts["not_done"] else ""))
+    return done

@@ -104,3 +104,41 @@ def test_synthetic_codes_and_real_labels_match():
     acts = option_labels()[("salud_gphpvcontacthistory", "salud_actionstaken")]
     assert _decode(pd.Series(["785570000;785570006"]), acts, multi=True)[0] == \
         "Verbally Shared Balance(s); Set Up Payment Plan"
+
+
+def test_score_qa_writes_one_row_per_call_and_resumes_from_cache(tmp_path, monkeypatch):
+    """Real-call QA: a fake reviewer stands in for the LLM; the second run must use only the cache."""
+    from types import SimpleNamespace
+
+    import salud_pipeline.llm_client as llm_client
+    import salud_pipeline.paths as paths
+    from salud_pipeline.phase1 import prompt
+    from salud_pipeline.phase1.checklist import TRANSCRIPT_ITEMS
+    from salud_pipeline.phase2.propensity.snapshots import score_qa
+
+    calls = {"n": 0}
+
+    class FakeEndpoint:
+        model, provider, max_retries = "fake-model", "fake", 0
+
+        def chat(self, *a, **k):
+            calls["n"] += 1
+            answers = {k: {"answer": "Yes" if i % 2 == 0 else "No", "reason": "r",
+                           "evidence": [{"turn": 1, "quote": "Hello this is billing"}]}
+                       for i, k in enumerate(TRANSCRIPT_ITEMS)}
+            import json
+            return json.dumps({"checklist": answers, "sentiment": {"label": "neutral", "evidence": []},
+                               "outcome": {"label": "non_committal", "evidence": []}, "summary": "s", "coaching": []})
+
+    monkeypatch.setattr(llm_client, "LLMEndpoint", FakeEndpoint)
+    monkeypatch.setattr(paths, "LLM_CACHE", tmp_path / "cache")
+    world = SimpleNamespace(transcripts={"c1": "Agent: Hello this is billing.\n\nCaller: Hi.",
+                                         "c2": "Agent: Hello this is billing again.\n\nCaller: Hello."})
+    out = tmp_path / "qa.csv"
+    first = score_qa(world, out)
+    assert len(first) == 2 and calls["n"] == 2 and out.exists()
+    yes = sum(i % 2 == 0 for i in range(len(TRANSCRIPT_ITEMS)))
+    assert first["qa_score"].round(3).eq(round(yes / len(TRANSCRIPT_ITEMS), 3)).all()
+    assert set(first["prompt_version"]) == {prompt.PROMPT_VERSION}
+    second = score_qa(world, out)
+    assert calls["n"] == 2 and len(second) == 2                       # served from the cache, no new requests

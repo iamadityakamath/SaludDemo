@@ -4,6 +4,8 @@
                                            # synthetic snapshots -> reports/phase2/synthetic_snapshots.csv
                                            #   (one row per call) and synthetic_fixed_date.csv (per patient)
     salud-propensity sentiment --synthetic # score the 4,152 synthetic transcripts (local model, slow, cached)
+    salud-propensity qa                    # Stage 1 QA of the 84 real calls with the dashboard's prompt
+                                           #   (SENDS the redacted transcripts to the LLM provider; cached)
 
 Real data is read from the Neon schema `final`; synthetic from data/phase2/synthetic_world. Sentiment runs
 locally (nothing leaves the machine). Outputs are gitignored.
@@ -19,12 +21,13 @@ import pandas as pd
 
 from ...paths import DEFAULT_WORLD, PHASE2_REPORTS, PHASE2_WORLDS
 from . import dictionary as D
-from .snapshots import WINDOW_DAYS, build, fixed_date_world, open_balance, score_sentiment, synthetic_qa
+from .snapshots import WINDOW_DAYS, build, fixed_date_world, open_balance, score_qa, score_sentiment, synthetic_qa
 from .modeling import world_files
 from .sources import load_real, load_synthetic
 
 DATASET_XLSX = PHASE2_REPORTS / "propensity_dataset.xlsx"
 SENTIMENT_CACHE = PHASE2_REPORTS / "sentiment_cache"
+REAL_QA = PHASE2_REPORTS / "qa_real.csv"          # from `salud-propensity qa`
 
 
 def summary(df: pd.DataFrame) -> pd.DataFrame:
@@ -71,7 +74,10 @@ def cmd_build(args) -> None:
     print("Loading the real package from Neon (schema final)…")
     real_world = load_real()
     sent = score_sentiment(real_world, SENTIMENT_CACHE / "real.csv")
-    real = build(real_world, sentiment=sent)
+    qa = pd.read_csv(REAL_QA).set_index("call_id")["qa_score"] if REAL_QA.exists() else None
+    if qa is None:
+        print("  (no real QA scores yet: `salud-propensity qa` sends the transcripts to the LLM provider)")
+    real = build(real_world, sentiment=sent, qa=qa)
     write_xlsx(real)
     print(f"Wrote {DATASET_XLSX} ({len(real)} rows)")
     print(summary(real).head(13).to_string(index=False))
@@ -107,6 +113,13 @@ def cmd_sentiment(args) -> None:
     score_sentiment(world, SENTIMENT_CACHE / name)
 
 
+def cmd_qa(args) -> None:
+    world = load_real()
+    print(f"Stage 1 QA of {len(world.transcripts)} real calls: the redacted transcripts are sent to the LLM provider.")
+    score_qa(world, REAL_QA, limit=args.limit)
+    print(f"Wrote {REAL_QA}. Run `salud-propensity build` to add the scores to the real snapshots.")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="salud-propensity", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -116,9 +129,11 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("sentiment", help="score transcripts with the local sentiment model (cached)")
     s.add_argument("--synthetic", action="store_true", help="the synthetic world instead of the real package")
     s.add_argument("--world", choices=sorted(PHASE2_WORLDS), default=DEFAULT_WORLD)
+    q = sub.add_parser("qa", help="Stage 1 QA of the real calls (sends transcripts to the LLM provider; cached)")
+    q.add_argument("--limit", type=int, help="maximum new LLM requests this run")
     args = ap.parse_args(argv)
     try:
-        {"build": cmd_build, "sentiment": cmd_sentiment}[args.cmd](args)
+        {"build": cmd_build, "sentiment": cmd_sentiment, "qa": cmd_qa}[args.cmd](args)
     except RuntimeError as e:
         sys.exit(f"Error: {e}")
     return 0

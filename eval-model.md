@@ -39,6 +39,18 @@ Other real tests:
 - the real-only 2-feature LR (leave-one-out) reaches 0.465;
 - the post-call model on 47 real calls reaches 0.704 with pre-call features and 0.680 with call outcome and sentiment added.
 
+**Real QA (Stage 1, run 2026-11-18 on all 84 real calls, prompt assist-v2 via Groq; `salud-propensity qa`):**
+
+| Post-call test on 47 real calls (no payment on the call) | AUC (95% CI) |
+|---|---|
+| pre-call features | 0.704 (0.525–0.859) |
+| + call outcome + sentiment | 0.680 (0.478–0.859) |
+| + the real QA score | 0.684 (0.480–0.861) |
+| the real QA score alone, no model | 0.594 (0.422–0.753) |
+
+The mean QA score is 0.54 for calls followed by payment and 0.49 for the rest. Call quality shows no measurable link to payment, on synthetic data
+(notebook 10) or on real data, but the real verdict rests on only 47 rows.
+
 **Caveat: this is not an independent test.** The world was tuned to these same 84 calls, so 0.697 shows that the world and the
 model are consistent with Salud's data. It does not show that the model generalises. Only new Salud calls can test that.
 
