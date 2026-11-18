@@ -7,7 +7,7 @@ One connected pipeline: **call transcript → QA / sentiment scores → payment 
 | Phase | Question | Method | Data |
 |---|---|---|---|
 | **1. Call analysis** | Did the agent handle each checklist item? What was the caller's sentiment, and how did the call end? | LLM (Groq `openai/gpt-oss-120b`), checked against manual tags | 10 real calls + 50 LLM-written synthetic calls |
-| **2. Propensity** | Which accounts are most likely to pay? | Traditional ML on account features + Phase 1's call-quality score | Synthetic accounts with payment histories |
+| **2. Propensity** | Which patients are most likely to pay? | Traditional ML (86 variants compared; monotone LightGBM chosen) on account and payment history, plus call outcome, sentiment and QA after a call | Trained on a synthetic world tuned to Salud's data; tested on Salud's 84-call final package |
 
 Phase 1's AI analyses (`phase1.ai_analyses`, joined to `big_synthetic` accounts) become Phase 2's call-quality input. The brief requires the two stages to connect rather than be separate projects.
 
@@ -133,47 +133,99 @@ On the 60 calls, the **end** label agrees with raters' sentiment tags about 75�
 
 ---
 
-## Phase 2: synthetic data for propensity
+## Phase 2: synthetic data and payment propensity
+
+Salud's final package has 84 real calls, only 58 of them usable for a 30-day payment label, which is far too few to train on.
+So models are trained on a **synthetic world** (a simulated call centre in Salud's own table format) and tested once on
+the real calls. Results, methods and known issues: [`eval-model.md`](eval-model.md) and the watch list at the top of
+[`reflections.md`](reflections.md).
+
+### Two synthetic worlds
+
+| World | Config | Folder | Use |
+|---|---|---|---|
+| **`salud`** (default) | `configs/synthetic_world_salud.json` (realism mode) | `data/phase2/synthetic_world_salud` | Tuned to Salud's final package; all modelling uses it |
+| `original` | `configs/synthetic_world.json` | `data/phase2/synthetic_world` | First world (Oct 2026); loaded into Neon `big_synthetic`; its key effects pointed the wrong way, so its model failed on real data |
 
 ```bash
-.venv/bin/salud-synth --config configs/synthetic_world.json   # -> data/phase2/synthetic_world
+.venv/bin/salud-synth --config configs/synthetic_world_salud.json --out data/phase2/synthetic_world_salud
+.venv/bin/salud-synth-calibrate --world data/phase2/synthetic_world_salud      # compare with Salud's data (needs DATABASE_URL)
+.venv/bin/salud-propensity build                                               # modelling files (real + synthetic)
 ```
 
-A 2,000-guarantor run takes about 3 seconds and produces roughly 3.2k accounts, 11k contacts, 4.1k connected calls and 1.4k QA reviews, all validated.
+The Salud world holds 2,000 guarantors, 10,780 accounts, 13,288 contacts, 15,069 receipts, 2,831 QA reviews and 8,062
+connected calls, each with a transcript. All 59 validation checks pass.
 
 ### Output
 
 ```
-data/phase2/synthetic_world/
-  crm/            6 tables shaped exactly like BIG_Synthetic_Schema.sql (the only valid model inputs)
-  truth/          planted latents and outcomes (for evaluation only, never use as features)
+data/phase2/synthetic_world_salud/
+  crm/            6 tables shaped exactly like Salud's schema (the only valid model inputs)
+  truth/          hidden traits and true outcomes (for evaluation only, never use as features)
   transcripts/    one template transcript per connected call
   synthetic.sqlite    every table, for SQL access
   manifest.json       config, counts, summary stats, validation results
 ```
 
-### How the planted truth works
+### The criteria the synthetic data must meet
 
-1. **Agents** have a skill level that sets their chance of passing each of the 9 QA checklist items.
-2. **Guarantors** have hidden traits: ability to pay, willingness, reachability and hardship.
-3. Each **connected call** draws true QA item results from its agent. Call quality, together with the patient's traits, drives sentiment and the call outcome.
-   - If Correct Call Statusing is No, the CRM records the wrong result; if Grammar is No, the agent note is garbled.
-4. **History before the cutoff:** statement-driven payments, promise-to-pay follow-through, payment plans, financial-assistance adjustments and insurance payments.
-5. **Outcome window** (cutoff 2026-04-01, 90 days): each open account pays with probability `sigmoid(OutcomeModel · features)`.
+1. **Same structure as Salud's tables.**
+   - The world has the same 6 tables, field names and option codes as the schema handoff.
+   - 59 automatic checks run on every build:
+     - unique keys and no orphan links;
+     - valid codes and field lengths;
+     - dates in order (no payment before placement, no QA review before its call);
+     - balances that reconcile to receipts, with none negative;
+     - labels read from receipts that equal the planted outcomes 100% of the time.
+2. **Statistically like Salud's real calls.** `salud-synth-calibrate` computes 51 statistics on both, and each synthetic value
+   must fall inside the real 95% bootstrap interval (500 resamples of the 84 calls). The statistics cover:
+   - **call mix (25):** direction, disposition, contact type, result, actions, talk time;
+   - **patient profile (13):** accounts, hospital share, balances, debt age, payment history, insurance, adjustments;
+   - **outcome (2):** paid within 30 days, and paid after a call with no payment on it;
+   - **relationships (11):** each key feature's single-feature AUC, both direction and strength.
 
-### Traps that are deliberate (and realistic)
+   Matching the relationships matters as much as matching the averages. The current world matches **50 of 51** on 4 seeds; the miss is
+   the share of patients with a recent adjustment (0.250 against an upper bound of 0.242).
+3. **A believable cause-and-effect story** (the `realism` block of the config):
+   - **accounts:** a skewed count with median 2, later visits spread over about 300 days, 48% hospital, lognormal balances;
+   - **insurance processing:** insurance payments and adjustments after placement;
+   - **a monthly payment habit:** patients start paying with ability, willingness and debt age, then tend to continue, as on a plan;
+   - **calls:** inbound calls, outbound campaigns (most reach the phone menu), transfers, and campaigns that skip patients who are paying;
+   - **call results** tuned to Salud's mix, with promises often not kept.
+4. **Known hidden answers.** Guarantor traits (ability, willingness, hardship), agent skill and every call's true QA items
+   and outcome are in `truth/`. They are used to check what the models recover, and never as features.
+5. **Realistic pitfalls, built in on purpose:**
+   - **The worklist is current state.** Balance and payment-status fields reveal the outcome, so build features only from dated rows on
+     or before the scoring date.
+   - **Contacts and accounts are many-to-many** through `salud_Account_X_ContactHistory`. Aggregate each to account level before joining.
+   - **Some receipts aren't self-pay cash.** Use `phase2.outcome_labels.self_pay_payments`.
+6. **Reproducible and safe:**
+   - a fixed seed gives identical data, and the original world still regenerates byte for byte;
+   - no real record is copied (only Salud's aggregate statistics are targets);
+   - transcripts come from templates that match the CRM outcome.
 
-- **The worklist is current state** as of the day after the outcome window, so balance and payment fields reveal the outcome. Build features only from dated rows on or before the cutoff.
-- **Contacts and accounts are many-to-many** through `salud_Account_X_ContactHistory`. Aggregate each to account level before joining.
-- **Some receipts aren't self-pay cash.** Use `phase2.outcome_labels.self_pay_payments`.
+**Known gaps** (tracked in the watch list):
+- New accounts with no payment history pay 19% in the synthetic world but 48% in Salud's data. The rate isn't one of the 51 checks, and the model
+  under-scores new accounts.
+- Real balances and adjustments have much heavier tails.
+- Salud's extract has no contact history, so contact features are excluded.
+- The targets come from only 84 calls.
+
+### The propensity models
+
+- **Pre-call:** one row per synthetic patient with an open balance on 2026-04-01. The label is any payment within 30 days; the features
+  are 11 that exist in Salud's data. 86 variants are compared in `notebooks/00`–`11` with repeated grouped 5×5 cross-validation, and the
+  chosen model (monotone LightGBM) is tested once on the real rows. The scores for Salud are in `reports/phase2/propensity_scores.xlsx`.
+- **Post-call:** one row per call with no payment on the call. It adds how the call ended, sentiment and the QA score, and is a comparison
+  only so far.
+- **Real QA:** `salud-propensity qa` runs Stage 1 QA on the real calls with the dashboard's prompt. It sends the redacted transcripts to Groq,
+  and results stay local in `reports/phase2/qa_real.csv`.
 
 ### Conventions (open items in the handoff)
 
 - Timestamps are naive America/Chicago. Money is USD; receipt amounts are positive.
 - `ActionsTaken` is a `;`-joined list of option codes.
-- The payment horizon (90 days) and the minimum amount ($0.01) are working assumptions until Salud confirms them.
-
----
+- The payment horizon and the minimum amount ($0.01) are working assumptions until Salud confirms them. The models use 30 days.
 
 ---
 
@@ -216,12 +268,15 @@ src/salud_pipeline/
     calls.py            locating the Phase 1 call files (for the one-time import)
     cli.py              salud-phase1 dashboard | analyze | compare
   sentiment/            turn-level sentiment (salud-sentiment): int8 ONNX model, call summaries, eval
+  final_package.py      loads Salud's final package into Neon schema 'final' (salud-db load-final)
   phase2/
     schema.py           tables and option codes from Salud's schema handoff
     outcome_labels.py   self-pay outcome labels at account grain
-    synthetic/          synthetic world generator (salud-synth); also wrote the Phase 1 calls
-db/migrations/          Postgres schema as code (001 big_synthetic, 002 phase1, 003 shared team db, 004 planted labels)
-configs/                phase1_synthetic_calls.txt, synthetic_world*.json
+    synthetic/          synthetic world generator (salud-synth), calibration against Salud (salud-synth-calibrate)
+    propensity/         snapshots, feature dictionary, modelling code, real QA (salud-propensity)
+notebooks/              00-11: data review, model families, ensembles, final model and real test
+db/migrations/          Postgres schema as code (001 big_synthetic … 007 sentiment, 009 final package)
+configs/                phase1_synthetic_calls.txt, synthetic_world.json (original), synthetic_world_salud.json (default)
 results/                tracked results (Phase 1 LLM vs ML decision)
 branding/               dashboard logo
 tests/                  database tests use the Neon 'tests' branch

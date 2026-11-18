@@ -76,6 +76,118 @@ Real-data numbers come from very few rows, so treat them as directions, not meas
     - Its AUC is below 0.5 when trained on 200 rows or fewer (early stopping on tiny validation sets).
       Don't use it at real-data sizes.
 
+15. **26 of Salud's 84 calls can't be used for the 30-day payment test.** `open` (found 2026-11-18)
+    - **23 calls have no account data in the extract.** 18 have a guarantor ID, but none of that patient's accounts or
+      transactions were included; 5 have no guarantor ID. Without transactions, "did they pay?" can't be answered.
+      Missing data isn't the same as no payment: 4 of these calls record a payment on the call, yet no receipt appears.
+      18 are from July, 5 from October.
+    - **3 calls (Oct 8–9) are too recent.** The data ends Nov 2, so only 24–25 of the 30 days can be seen.
+      1 paid on day 25, so it is really a known "paid"; the other 2 can't be called yet.
+      They are excluded together so that only positives aren't let in, which would inflate the pay rate.
+    - **Impact:** all 58 usable rows come from one day (2026-07-01), so the real test has no spread over time (item 12).
+    - **Fix:** ask Salud for the accounts and transactions of the 18 known guarantors, and for transactions after
+      Nov 2, which would make the 3 recent calls usable. Added to the data request.
+
+---
+
+## 2026-11-18 · The synthetic data: what we built, the criteria, and what we learned (summary)
+
+**Why synthetic:** Salud's final package has 84 real calls, and only 58 have a usable 30-day payment label. That is far too few
+to train and compare models. So models learn on a simulated call centre in Salud's table format and are tested once on the real calls.
+
+**How it evolved:**
+1. **Original world (Oct 2026), `configs/synthetic_world.json`.**
+   - Hidden patient traits drove payment, agents had skill levels, and calls had planted QA items and outcomes.
+   - Loaded into Neon `big_synthetic`.
+   - The models looked fine on it (CV 0.69) but **failed on Salud's data** (real AUC 0.45, ranking reversed). Key effects pointed
+     the wrong way: older debt paid *less* in synthetic data and *more* in real data, and payment history was much weaker than in real data.
+   - **Lesson:** matching averages is not enough. Relationships must match too.
+2. **Calibration tool, `salud-synth-calibrate`.** It computes 51 statistics on both worlds and requires each synthetic value to fall inside
+   the real 95% bootstrap interval. This turned "similar to Salud" into a pass/fail list.
+3. **Realism mode** (new `realism` block; the original world still reproduces byte for byte). New mechanisms:
+   - a skewed account count, with visits spread over time;
+   - insurance processing after placement;
+   - a monthly payment habit: patients start with ability, willingness and debt age, then continue like a plan;
+   - campaign calls that mostly reach the phone menu, transfers, and campaigns that skip patients who are paying;
+   - phone payments driven by the habit, and call-result offsets.
+4. **Tuning** to `configs/synthetic_world_salud.json` (seed 11): **50/51 statistics matched**, stable on 4 seeds.
+   - **Size:** 2,000 guarantors, 10,780 accounts, 13,288 contacts, 15,069 receipts, 2,831 QA reviews and 8,062 calls with transcripts.
+   - **Validation:** all 59 checks pass.
+
+**The six criteria** (now in the README):
+1. the same structure as Salud's tables, with 59 automatic checks;
+2. statistically like Salud's calls: 51 statistics inside the real 95% intervals, *including the relationships*;
+3. a believable cause-and-effect story;
+4. hidden true answers kept in `truth/`, never used as features;
+5. realistic pitfalls built in: the current-state worklist leaks the outcome, contacts and accounts are many-to-many, and not every receipt is a patient payment;
+6. reproducible (fixed seed), with no real record copied and only aggregate targets.
+
+**Result on the models:**
+- On real data the pre-call model moved from AUC 0.45 to **0.70**, ranking real patients the right way (35% → 42% → 74% by score third).
+- It still doesn't beat the simple rule (0.72).
+- The real test is no longer independent, because the world was tuned to the same calls.
+
+**Gaps that remain** (tracked in the watch list):
+- new accounts pay 19% in the synthetic world against 48% real; this isn't one of the 51 checks;
+- real balances and adjustments have heavier tails (mean adjustments 30 times higher);
+- there is no contact history in Salud's extract;
+- one statistic is just outside its interval (the adjustment share);
+- the targets come from only 84 calls on few days.
+
+**What I'd do differently:**
+- write the calibration tool *before* the first world, and include relationship checks from the start;
+- hold some real calls out of tuning so the real test stays independent;
+- add the new-account pay rate as a target.
+
+**Updated:** README "Phase 2" section rewritten: two worlds, commands, output, the six criteria, known gaps, the propensity
+models and real QA. The layout now lists `final_package.py`, `propensity/`, `notebooks/` and the migrations.
+
+---
+
+## 2026-11-18 · Why 26 of Salud's 84 real calls can't be used for the payment test
+
+**Question:** Salud gave 84 real calls, but only 58 are usable for "paid within 30 days". What about the rest?
+
+**Found (aggregates only):**
+
+| Group | Calls | Reason | Payment seen |
+|---|---|---|---|
+| Usable | 58 | linked patient and accounts, full 30 days visible | all from 2026-07-01 |
+| No account data | 23 | 18 have a guarantor ID but none of their accounts or transactions are in the extract; 5 have no guarantor ID | none visible, but 4 of these calls record a payment on the call, so the data is missing, not a non-payment |
+| Too recent | 3 | called Oct 8–9; data ends Nov 2, so only 24–25 of 30 days visible | 1 paid on day 25; 2 not yet |
+
+- **Results of the 23 calls, as recorded:**
+
+  | Result | Calls |
+  |---|---|
+  | Transferred | 9 |
+  | Promised to pay | 4 |
+  | Paid on the call | 4 |
+  | Non-committal | 3 |
+  | Insurance follow-up | 2 |
+  | Contested balance | 1 |
+
+  18 are from July, 5 from October.
+
+**Decided:**
+- keep both groups out of training and testing;
+- treat no visible payment as unknown, not as non-payment;
+- keep out the 1 recent payer as well, because letting in only known payers would inflate the pay rate.
+
+**Why it matters:** the whole real test comes from one day, so it says nothing about stability over time. That is watch-list items 12 and 15.
+
+**Data request to Salud (updated):**
+1. More call records with the same fields as the final package, ideally from a different time period, to test on unseen calls.
+2. **The accounts and transactions for the 18 guarantors whose calls are in the package but whose accounts are not.**
+3. **Transactions after Nov 2, 2026**, which would complete the 30-day window for the 3 calls from Oct 8–9.
+4. The average cost per call, to set the calling cut-off.
+5. The Guarantors tab, plus the ExcludeTransaction and FinancialClass fields.
+
+Items 2 and 3 alone could raise the real test from 58 to 79 rows.
+
+**Would do differently:** I should have explained the 58-of-84 drop when first reporting the real test, instead of
+leaving it as a bare number.
+
 ---
 
 ## 2026-11-18 · Clean-up for a fresh start
