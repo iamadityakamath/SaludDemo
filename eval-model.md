@@ -8,7 +8,7 @@ Updated after each notebook.
 
 | Item | Choice | Why |
 |---|---|---|
-| Target (pre-call) | `paid_30d`: any patient payment from the as-of day to 30 days after | brief: any payment counts; 30 days ≈ one billing cycle |
+| Target (pre-call) | `paid_30d`: any patient payment from the as-of day to 30 days after | our choice, not Salud's (to confirm): brief says any payment counts; 30 days ≈ one statement / plan cycle; short enough to credit the call; most predictable window in the Salud-tuned world (notebook 09). Salud's data has no due or promised dates, so "paid on time" can't be the target |
 | Target (post-call) | `paid_after_call_30d`, rows without a payment taken on the call | the call's outcome isn't known in advance |
 | Training rows | **fixed-date design**: one row per synthetic patient with an open balance on 2026-04-01 (Salud-tuned world: 1,794; dev 1,435, holdout 359. Original world: 1,350) | the call design has almost no signal (oracle 0.58 vs 0.80) — notebook 00 §6 |
 | Validation | repeated 5×5 stratified K-fold, grouped by patient (25 scores per run) | stable (SD of estimate ±0.001 vs ±0.03 for one split) |
@@ -17,6 +17,26 @@ Updated after each notebook.
 | Also | Brier, log loss, PR-AUC, calibration slope / in-the-large, payers captured in top 20% | probabilities must be usable for tiers and expected dollars |
 | Choosing | corrected resampled t-test (Nadeau–Bengio) + one-standard-error rule (simplest within 1 SE) | fold scores are correlated; prefer explainable models |
 | Feature sets | `FS_ALL` 23 · `FS_PRUNED` 14 (duplicates removed) · `FS_TRANSFER` 11 (also no prior-contact features, which the real data lacks) | notebook 00 §3–4 |
+
+## Next data: the master file (2026-11-18), quick check only
+
+`reports/phase2/pre_training_data.xlsx` (`salud-propensity master`): one row per call, synthetic (master world, Salud's
+time frame to 2026-11-18, 51/51 statistics) + Salud's 84 real calls. `split`: random 80/20 by patient for synthetic,
+`real_test` for real. It fixes three training-data problems: no calls in the pre-call label window, pre-call patients
+unlike the real ones, and no payment plans in post-call rows (reflections watch items 16, 17, 21).
+
+Quick check (untuned, not logged to `results.csv`; train = synthetic `train`, `label_usable` rows):
+
+| Model | Features | Synthetic test | Real (n) | Mean prediction vs actual (real) |
+|---|---|---|---|---|
+| Pre-call LR | 11 | 0.694 | 0.766 (58) | 0.48 vs 0.50 |
+| Pre-call LightGBM (monotone) | 11 | 0.708 | 0.750 (58) | 0.55 vs 0.50 |
+| Post-call LR | 32 | 0.793 | 0.696 (47) | 0.34 vs 0.36 |
+| Post-call LightGBM | 32 | 0.793 | 0.765 (47) | 0.41 vs 0.36 |
+| Rule B-03 | – | – | 0.718 (58) | – |
+
+Real CIs are about ±0.15, so these are directions. The notebooks below still use the old files and must be re-run on the
+master file before any of this replaces the current status.
 
 ## Current status (Salud-tuned world, 2026-11-17): the model now ranks real patients the right way, but does not beat the rule
 
@@ -114,7 +134,9 @@ the real relationships.
 | Neural network | 0.460 | 0.449 | 0.456 | 0.501 | 0.573 | 0.563 |
 
 Training on call rows instead of fixed-date rows (same patients): LR 0.615 vs 0.691; scorecard 0.591 vs 0.688.
-Label window: 30 days 0.674 · 60 days 0.692 · 90 days 0.690 (rebuilt fixed-date data).
+Label window, **Salud-tuned world** (scorecard, fixed-date data rebuilt per window): **30 days 0.861** · 60 days 0.831 · 90 days 0.801.
+Original world (the numbers above in this section are from it): 30 days 0.674 · 60 days 0.692 · 90 days 0.690, i.e. no clear winner there.
+Real 58: 29 paid within 30 days; 12 on the call day, 4 in days 1–7, 7 in days 8–14, 6 in days 15–30 (median 7 days).
 
 ## Call quality (notebook 10, post-call target, synthetic)
 

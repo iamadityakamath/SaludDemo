@@ -108,3 +108,12 @@ Newest entries go at the top of each section. (Kept up to date with every task; 
 - **`sed` with `#` as the delimiter breaks when the replacement contains `#`.** Use the Edit tool for multi-character edits.
 - **A Neon migration runner applies every pending file.** `salud-db setup` would also have run an unrelated pending
   migration (008, drops a table). Loaders that change one thing should apply only their own migration.
+- **A row is a snapshot at one date, so each prediction question gets its own file.** Pre-call = one row per patient on a
+  fixed day; post-call = one row per call. Same columns, different dates and rows. Explain this with a side-by-side table
+  and the dictionary's `in_current_models` column, not with a column-group count.
+- **A label window is a business choice, so write down why and confirm it with the client.** Check it in every world:
+  30 days was best in the Salud-tuned world (0.861 vs 0.801 at 90) but not in the original one (0.674 vs 0.692 at 60).
+- **Check what happens inside the label window, not only the features.** The fixed-date design's 30 days had no
+  calls at all (the world's calls ended the day before), so the pre-call model learned "pays without a call"
+  while the real test asked "pays when called". Fixed by a world whose calls run through the whole period.
+- **New generator options default to off** so older worlds regenerate byte for byte; compare the CSVs after any change.

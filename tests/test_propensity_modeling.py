@@ -133,3 +133,13 @@ def test_smart_woe_keeps_zero_heavy_and_few_valued_columns():
     smart = M.WoE().fit(X, y)
     assert len(smart.table_["x"]) == 2 and smart.iv_["x"] > 0.05
     assert len(smart.table_["count"]) == 4          # one bin per distinct value
+
+
+def test_dictionary_model_fields_match_the_models():
+    from salud_pipeline.phase2.propensity import dictionary as D
+
+    assert D.MODEL_PRE == M.FS_TRANSFER
+    names = {c.name for c in D.COLUMNS}
+    assert set(D.MODEL_PRE + D.MODEL_POST_EXTRA) <= names
+    f = D.as_frame().set_index("name")["in_current_models"]
+    assert (f == "pre-call + post-call").sum() == 11 and (f == "post-call only").sum() == 21

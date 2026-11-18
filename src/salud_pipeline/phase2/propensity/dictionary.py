@@ -125,7 +125,7 @@ COLUMNS: list[Col] = [
 
     # ---- post-call: call quality (Stage 1) ----
     Col("qa_score", "post", "Call quality", "Share of the QA checklist items met (0-1)",
-        "real: Stage 1 AI review (not yet run on these calls); synthetic: truth_calls.quality_score_transcript_items",
+        "real: Stage 1 AI review (salud-propensity qa, dashboard prompt); synthetic: truth_calls.quality_score_transcript_items",
         note="Empty for real calls until Stage 1 runs on them (needs approval: it sends transcripts to Groq)."),
     Col("caller_sentiment_overall", "post", "Call quality", "Caller's average sentiment over the call (-1..1)",
         "transcripts, local sentiment model (cardiffnlp roberta, ONNX)", "sentiment.results.score_call"),
@@ -181,6 +181,20 @@ PRE_FEATURES = names("pre")
 POST_FEATURES = PRE_FEATURES + [c for c in names("post") if c not in TEXT_ONLY]
 
 
+# The fields the current models actually train on (notebooks 10-11). The other pre/post columns are candidates that
+# were compared and left out: duplicates, or prior-contact fields that Salud's extract doesn't have.
+MODEL_PRE = ["n_accounts", "n_hospital_accounts", "n_physician_accounts", "balance_at_t", "days_since_first_placement",
+             "days_since_last_placement", "n_payments_90d", "n_payments_365d", "days_since_last_payment",
+             "n_insurance_payments_365d", "n_adjustments_365d"]                    # = modeling.FS_TRANSFER
+MODEL_POST_EXTRA = ["inbound", "spoke_with_agent", "collection_attempted", "promised_to_pay", "non_committal",
+                    "contested_or_refused", "pursued_insurance", "transferred", "action_shared_balance",
+                    "action_payment_plan", "action_financial_assistance", "action_statement_or_bill", "action_insurance",
+                    "n_actions", "asked_financial_assistance", "talk_seconds",            # how the call ended (16)
+                    "caller_sentiment_overall", "caller_sentiment_end", "caller_sentiment_shift",
+                    "agent_sentiment_overall",                                          # sentiment (4)
+                    "qa_score"]                                                         # QA (1)
+
+
 def as_frame() -> pd.DataFrame:
     df = pd.DataFrame([c.__dict__ for c in COLUMNS])
     df["known_before_call"] = df["use"].isin(["id", "pre", "audit"])
@@ -188,4 +202,10 @@ def as_frame() -> pd.DataFrame:
                                    "label": "target (never a feature)", "id": "not a feature",
                                    "audit": "fairness check only"})
     df.loc[df["name"].isin(TEXT_ONLY & set(names("post"))), "used_by"] = "readable only (represented by flags)"
-    return df[["name", "group", "meaning", "source", "rule", "known_before_call", "used_by", "note"]]
+    label = {"paid_30d": "TARGET of the pre-call model", "paid_after_call_30d": "TARGET of the post-call model"}
+    df["in_current_models"] = [
+        "pre-call + post-call" if n in MODEL_PRE else
+        "post-call only" if n in MODEL_POST_EXTRA else
+        label.get(n, "row filter (post-call keeps rows = 0)" if n == "paid_on_call" else "no")
+        for n in df["name"]]
+    return df[["name", "group", "meaning", "in_current_models", "source", "rule", "known_before_call", "used_by", "note"]]

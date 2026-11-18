@@ -1,14 +1,18 @@
-"""Payment propensity, Step 1: the combined modeling sheet.
+"""Payment propensity, Step 1: the modeling files.
 
-    salud-propensity build                 # real snapshots -> reports/phase2/propensity_dataset.xlsx,
-                                           # synthetic snapshots -> reports/phase2/synthetic_snapshots.csv
-                                           #   (one row per call) and synthetic_fixed_date.csv (per patient)
-    salud-propensity sentiment --synthetic # score the 4,152 synthetic transcripts (local model, slow, cached)
+    salud-propensity build                 # real snapshots -> reports/phase2/propensity_dataset.xlsx (test data),
+                                           # synthetic -> reports/phase2/synthetic_snapshots_salud.csv (one row per
+                                           #   call: post-call training) and synthetic_fixed_date_salud.csv (one row
+                                           #   per patient on 2026-04-01: pre-call training). --world original: old world
+    salud-propensity sentiment --synthetic # score the synthetic transcripts (local model, slow, cached)
+    salud-propensity master                # master file: synthetic (master world) + real calls, one row per call
+                                           #   -> reports/phase2/pre_training_data.xlsx
     salud-propensity qa                    # Stage 1 QA of the 84 real calls with the dashboard's prompt
                                            #   (SENDS the redacted transcripts to the LLM provider; cached)
 
-Real data is read from the Neon schema `final`; synthetic from data/phase2/synthetic_world. Sentiment runs
-locally (nothing leaves the machine). Outputs are gitignored.
+Real data is read from the Neon schema `final`; synthetic from the world folder in paths.PHASE2_WORLDS
+(default "salud": data/phase2/synthetic_world_salud). Sentiment runs locally (nothing leaves the machine).
+Outputs are gitignored.
 """
 
 from __future__ import annotations
@@ -120,6 +124,15 @@ def cmd_qa(args) -> None:
     print(f"Wrote {REAL_QA}. Run `salud-propensity build` to add the scores to the real snapshots.")
 
 
+def cmd_master(args) -> None:
+    from .master import MASTER_XLSX, build_master, write_master
+    df = build_master(args.world)
+    write_master(df)
+    print(f"Wrote {MASTER_XLSX} ({len(df)} rows)")
+    print(df.groupby(["data_type", "split"]).agg(rows=("call_id", "size"), patients=("guarantor_id", "nunique"),
+                                                usable=("label_usable", "sum"), pay_rate=("paid_30d", "mean")).round(3))
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="salud-propensity", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -131,9 +144,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--world", choices=sorted(PHASE2_WORLDS), default=DEFAULT_WORLD)
     q = sub.add_parser("qa", help="Stage 1 QA of the real calls (sends transcripts to the LLM provider; cached)")
     q.add_argument("--limit", type=int, help="maximum new LLM requests this run")
+    m = sub.add_parser("master", help="the master file: synthetic + real calls, one row per call (pre_training_data.xlsx)")
+    m.add_argument("--world", choices=sorted(PHASE2_WORLDS), default="master")
     args = ap.parse_args(argv)
     try:
-        {"build": cmd_build, "sentiment": cmd_sentiment, "qa": cmd_qa}[args.cmd](args)
+        {"build": cmd_build, "sentiment": cmd_sentiment, "qa": cmd_qa, "master": cmd_master}[args.cmd](args)
     except RuntimeError as e:
         sys.exit(f"Error: {e}")
     return 0

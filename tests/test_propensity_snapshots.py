@@ -142,3 +142,31 @@ def test_score_qa_writes_one_row_per_call_and_resumes_from_cache(tmp_path, monke
     assert set(first["prompt_version"]) == {prompt.PROMPT_VERSION}
     second = score_qa(world, out)
     assert calls["n"] == 2 and len(second) == 2                       # served from the cache, no new requests
+
+
+def test_master_split_sampler_and_groups():
+    import numpy as np
+    import pandas as pd
+    from salud_pipeline.phase2.propensity.master import SCORES, fit_sampler, outcome_group, patient_split, sample_scores
+
+    g = pd.Series([f"g{i % 50}" for i in range(400)])
+    split = patient_split(g)
+    assert not (set(g[split == "train"]) & set(g[split == "test"]))          # no patient on both sides
+    assert 0.15 < (split == "test").mean() < 0.25
+
+    rng = np.random.default_rng(0)
+    n = 120
+    real = pd.DataFrame({"spoke_with_agent": rng.random(n) < 0.8, "paid_on_call": rng.random(n) < 0.2,
+                         **{c: rng.random(n) < 0.15 for c in ["promised_to_pay", "non_committal", "transferred",
+                                                              "contested_or_refused", "pursued_insurance"]}})
+    for c in SCORES:
+        real[c] = rng.uniform(-0.5, 0.5, n) + 0.3 * real["paid_on_call"]
+    grp = outcome_group(real)
+    assert (grp[~real["spoke_with_agent"]] == "no_agent").all()
+    assert (grp[real["spoke_with_agent"] & real["paid_on_call"]] == "paid").all()
+    s = fit_sampler(real)
+    out = sample_scores(pd.concat([real] * 20, ignore_index=True), s)
+    for c in SCORES:   # inside the real range, and paid calls score higher, as in the real data
+        assert out[c].min() >= real[c].min() - 1e-4 and out[c].max() <= real[c].max() + 1e-4   # 4-decimal rounding
+    big = pd.concat([real] * 20, ignore_index=True)
+    assert out["qa_score"][outcome_group(big) == "paid"].mean() > out["qa_score"][outcome_group(big) != "paid"].mean()

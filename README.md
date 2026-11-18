@@ -213,6 +213,15 @@ data/phase2/synthetic_world_salud/
 
 ### The propensity models
 
+**Master file (next training data):** `salud-propensity master` writes `reports/phase2/pre_training_data.xlsx`, one row per
+call for both models. Synthetic rows come from the master world (`configs/synthetic_world_master.json`: Salud's time frame,
+calls up to 2026-11-18, 51/51 statistics; generate it with
+`salud-synth --config configs/synthetic_world_master.json --out data/phase2/synthetic_world_master --transcripts none`);
+real rows are Salud's 84 calls. Columns `data_type` (synthetic / real), `split` (train / test by patient, real_test),
+`label_usable` and `post_call_row` select the rows; the pre-call model uses the 11 history columns, the post-call model
+32. Synthetic sentiment and QA are sampled from the real calls with the same outcome. The notebooks still use the
+earlier files until they are re-run.
+
 - **Pre-call:** one row per synthetic patient with an open balance on 2026-04-01. The label is any payment within 30 days; the features
   are 11 that exist in Salud's data. 86 variants are compared in `notebooks/00`–`11` with repeated grouped 5×5 cross-validation, and the
   chosen model (monotone LightGBM) is tested once on the real rows. The scores for Salud are in `reports/phase2/propensity_scores.xlsx`.
@@ -225,7 +234,10 @@ data/phase2/synthetic_world_salud/
 
 - Timestamps are naive America/Chicago. Money is USD; receipt amounts are positive.
 - `ActionsTaken` is a `;`-joined list of option codes.
-- The payment horizon and the minimum amount ($0.01) are working assumptions until Salud confirms them. The models use 30 days.
+- The payment horizon and the minimum amount ($0.01) are working assumptions until Salud confirms them. The models use 30 days:
+  about one statement or payment-plan cycle, short enough to credit the call, and the most predictable window tested
+  (30 / 60 / 90 days: 0.861 / 0.831 / 0.801). Most real payments after a call arrive within 2 weeks. Salud's data has no
+  due dates, plan amounts or promised dates, so "paid on time" can't be the target yet.
 
 ---
 

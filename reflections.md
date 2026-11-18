@@ -35,6 +35,9 @@ Real-data numbers come from very few rows, so treat them as directions, not meas
 3. **Under-predicts Salud's overall pay rate.** `accepted`
    - **Evidence:** the model predicts about 25% on average against 50% actual on the real rows. Synthetic patients pay at 35% in the fixed design, against 50% for Salud's call rows.
    - **Handled by:** an intercept shift of +1.7 log-odds (leave-one-out), which takes the Brier score from 0.287 to 0.219.
+   - **Likely cause (found 2026-11-18):** the training label has no calls in its window; the real one does (item 21).
+   - **Update 2026-11-18:** trained on the master file, the mean prediction on the real rows is 0.48–0.55 against 0.50, with
+     no shift (quick check). Confirm when the notebooks are re-run, then mark `fixed`.
    - **Impact:** the ranking is unaffected; the probabilities and expected dollars depend on the shift.
 4. **Raw boosted-tree probabilities are too cautious.** `fixed`
    - **Evidence:** calibration slope 1.92.
@@ -87,6 +90,163 @@ Real-data numbers come from very few rows, so treat them as directions, not meas
     - **Impact:** all 58 usable rows come from one day (2026-07-01), so the real test has no spread over time (item 12).
     - **Fix:** ask Salud for the accounts and transactions of the 18 known guarantors, and for transactions after
       Nov 2, which would make the 3 recent calls usable. Added to the data request.
+16. **Synthetic payment plans always come with a payment on the call.** `fixed` (found 2026-11-18)
+    - **Update 2026-11-18:** fixed in the master world (`plan_on_promise = 0.25`): 579 post-call training rows now have a plan.
+    - 670 synthetic calls set up a payment plan, and **all** were paid on the call, so the post-call training rows
+      (`paid_on_call = 0`) have **0** payment plans. In the real usable rows, 5 of 47 post-call rows have a plan.
+    - **Impact:** the post-call model can't learn anything from `action_payment_plan`; on real calls it ignores a plan entirely.
+    - **Fix:** let the generator create plans whose first payment comes later (days 1–30), then re-check calibration.
+17. **The pre-call training patients don't look like the real test patients.** `fixed` (found 2026-11-18)
+    - **Update 2026-11-18:** fixed in the master file: pre-call rows are call days, the same population as the real test.
+    - The fixed-date file (everyone with an open balance on Apr 1) is older, bigger debt: median 4 accounts, $855, 251 days
+      since first placement, 36% never paid. The call file and the real test rows are closer to each other:
+      2 accounts, $446 / $566, 97 / 67 days, 66% / 71% never paid.
+    - **Why:** calls happen early in a debt's life; a one-day photo of everyone catches many old accounts.
+    - **Impact:** the pre-call model is trained on a different mix from the one it's tested on (real rows are taken at
+      call time). May explain part of the level shift (item 3) and the gap to the simple rule.
+    - **Next:** compare training the pre-call model on the call file (no call fields) on the real 58; notebook 09 only
+      compared them on synthetic data.
+18. **Synthetic call volume grows fast, so the post-call holdout is only 3 weeks.** `accepted` (found 2026-11-18)
+    - Calls per quarter: 85 (2024 Q4) → 4,459 (2026 Q1). The "latest 20% by date" holdout is Mar 8–31, 2026.
+    - **Impact:** the holdout tests a narrow window, not a long drift. Fine for a comparison model; revisit if the post-call
+      model becomes a deliverable.
+19. **Salud's data has no amount due, due date or promised-payment date.** `open` (found 2026-11-18)
+    - Calls: `CollectionResult` says *what* happened (17 "Promised to Pay"), but not when or how much. `CallbackDate` is
+      empty and `RequestedCallback` is "No" on all 84. `PaymentAmount` is filled on 15 calls (paid on the call).
+    - Accounts (290, one snapshot as of the extract): current balance, receipts, adjustments, statement count and last
+      statement date, plan payments made (132 > 0) and missed (17 missed 1). Empty: `OnPaymentPlan`, plan last payment
+      date, `FirstStatementDate`, `LastPlacementDate`, `SelfPayBalanceDate`. No amount due, minimum payment,
+      statement amount or due date anywhere.
+    - Transactions (499, Feb 2024 – Nov 2 2026, 44 guarantors) are the only dated history: 230 patient payments,
+      45 insurance payments, 224 insurance adjustments. They record what was paid, never what was due.
+    - **Impact:** we can't check whether a promise was kept on time, or model "pays by the due date". The plan
+      counts can't be features: they describe the account after the call (in `LEAKING_SNAPSHOT_FIELDS`).
+    - **Ask Salud:** promised amount and date per call, plan start date, monthly amount, due day, and plan history
+      with dates. Added to the data request.
+20. **The pre-call model drops the dollar-amount fields, and the rule for dropping them was set on the original world.** `open` (found 2026-11-18)
+    - `modeling.DUPLICATES` drops each amount field whose count twin has Spearman ρ > 0.9 (and `placement_balance`,
+      `days_since_last_discharge`, `ever_paid`). In the Salud-tuned world, amount paid vs number of payments is only
+      0.85–0.86, below the rule's own cut-off (real 58: 0.99). The list is hard-coded, not recomputed per world.
+    - **Quick test (2 × 5 folds, not logged):** adding the amounts changes CV by at most +0.006 (LR 0.866 → 0.872; LightGBM
+      0.867 → 0.871) and the synthetic holdout by ≤ 0.003. The real-58 moves (0.643–0.719) are inside its CI (±0.15), so they are noise.
+    - **Recommended (user to confirm):** keep 11 fields for now (simpler, same accuracy). Revisit with more real data, when amounts could matter.
+21. **The pre-call label means something different in training and in the real test.** `fixed` (found 2026-11-18)
+    - **Update 2026-11-18:** fixed in the master world: calls run to 2026-11-18, so every 30-day window includes calls, as in the real test.
+    - **Training (fixed date):** `paid_30d` = any patient payment from Apr 1 to May 1, 2026. The synthetic world's calls end on
+      Mar 31, so **no one is called during that window**: the label is "pays without a call".
+    - **Real test:** the snapshot date is the call day, so `paid_30d` includes the call itself. 12 of the 29 real payers paid
+      on the call day.
+    - **Evidence:** synthetic pay rate 35% (fixed date, no calls) vs 47% on synthetic call days; real 50%.
+    - **Impact:** likely a main cause of the level shift (item 3) and a reason the model learns "habitual payers pay anyway"
+      (item 2). It ranks who pays unprompted, while Salud's question is who pays when called.
+    - **Options:** (a) extend the synthetic world's calls past Apr 1 so the fixed-date label includes calls;
+      (b) train pre-call on the call file (call-day snapshots, call fields ignored), which matches the real test;
+      (c) keep as is and document. (b) is the cheapest and also addresses item 17.
+
+---
+
+## 2026-11-18 · The master file `pre_training_data.xlsx`: new synthetic world over Salud's time frame
+
+**Asked:** redo the synthetic data over Salud's time frame up to 2026-11-18, as one master file for both models, with
+`data_type`, random splits, and synthetic sentiment based on the real calls.
+
+**Decided with the user:** one flat sheet (one row per call); Salud's 84 real calls included as `data_type = real`, test only;
+synthetic sentiment and QA sampled from the real calls by outcome (no transcripts); random 80/20 split **by patient**.
+
+**Built:**
+- **World** `configs/synthetic_world_master.json` → `data/phase2/synthetic_world_master` (the Salud-tuned settings plus):
+  - time frame: history from 2023-08 (first calls May 2023, like Salud's first placements), calls up to **2026-11-18**, no data after;
+  - `call_delay_days = 35`: calls come soon after one of the patient's placements (before: spread over the whole history,
+    which put calls on 276-day-old debt against Salud's 67);
+  - `phone_pay_max_months = 3`: pay-by-phone only for recent placements;
+  - `adjustment_p = 0.09`;
+  - `plan_on_promise = 0.25`: a quarter of promise-to-pay calls set up a plan with the first payment later (real: 4 of 17).
+  - **51/51** calibration statistics (seed 11 and 12), 59/59 validation checks. The new options default to off, and the
+    Salud-tuned world still regenerates byte for byte.
+- **File** `reports/phase2/pre_training_data.xlsx`, sheet "Model rows" (`salud-propensity master`): 8,693 rows × 74 columns.
+  - Synthetic: 8,609 calls, 1,931 patients, May 2023 – Nov 17 2026; train 6,909 / test 1,700 (no patient on both sides);
+    379 calls after Oct 19 have an incomplete 30-day window (`label_usable = False`).
+  - Real: 84 calls (58 usable), `split = real_test`.
+  - Added columns: `data_type`, `split`, `label_usable`, `post_call_row`, `sentiment_source`, `qa_source`.
+  - Sentiment/QA sampler: per outcome group (paid, promised, non-committal, transferred, contested, insurance,
+    no agent), real means shrunk towards the overall mean (8 pseudo-calls), real within-group covariance, clipped to the real range.
+
+**Quick check (untuned LR / LightGBM, not logged):**
+
+| | Old data | Master file |
+|---|---|---|
+| Pre-call, real 58 | 0.697 (GB-06) | 0.750–0.766 |
+| Rule "paid before, most recent first" | 0.718 | 0.718 |
+| Mean prediction vs actual (real) | 0.25 vs 0.50 | 0.48–0.55 vs 0.50 |
+| Pre-call, synthetic test | 0.83 (fixed date) | 0.69–0.71 (call days: a harder, more realistic task) |
+| Post-call, real 47 | 0.68 | 0.70–0.77 |
+
+The real 58 has a CI of about ±0.15, so "beats the rule" is not established; the level now matches without a correction.
+
+**Not done yet:** notebooks 00–11 still use the old files; they need re-running on the master file.
+
+**Would do differently:** check what the label window contains (calls or not) before building the first design.
+
+---
+
+## 2026-11-18 · Why the models predict payment within 30 days
+
+**The 30-day window is our choice, not a Salud requirement.** Reasons:
+1. **A call needs a deadline to count as worked.** "Will they ever pay?" can't rank this week's calls, and the longer the window,
+   the more a payment is caused by something else (a new statement, another call, insurance).
+2. **It matches the monthly cycle:** statements and payment-plan payments are monthly, so 30 days ≈ one bill and one chance to pay.
+3. **Most payments a call drives come fast.** Real 58: 29 paid within 30 days; 12 on the call day, 4 in days 1–7, 7 in days 8–14,
+   6 in days 15–30 (median 7 days).
+4. **It's the most predictable window** in the Salud-tuned world (notebook 09, scorecard): 30 days 0.861, 60 days 0.831, 90 days 0.801.
+   In the original world there was no clear winner (0.674 / 0.692 / 0.690), so this reason depends on the world.
+
+**Limit:** with no due dates, plan amounts or promised dates (watch item 19), "paid on time" can't be the target; a fixed
+window is the fallback. The window is one setting, so changing it is cheap.
+
+**Next:** ask Salud which time frame matters to them (data request item 7).
+
+---
+
+## 2026-11-18 · Design note: live scoring with temporary tables (agreed, not built)
+
+**Decided (with the user):** the training CSVs stay local (synthetic, rebuilt from config + seed); they are not stored in Neon.
+Live scoring builds model rows on demand in a temporary table and drops it afterwards:
+- **pre-call:** one row per patient with an open balance, as of today → pre-call score → call list;
+- **post-call:** one row per call (patient history + the 21 call fields from Stage 1) → post-call score.
+
+**Keep permanently anyway:** the scores (ID, date, score, tier, model version) and ideally the feature row. They are small,
+they let us check predictions against the 30-day outcome, and they become the real training data we lack (58 rows today).
+Some fields (call sentiment and QA, corrected balances) can't be rebuilt exactly later.
+
+**Risk:** the temporary table must be built by the same code as the training files (`snapshots.py`), or tested to give identical
+rows if done in SQL. Otherwise features drift and scores quietly degrade.
+
+---
+
+## 2026-11-18 · The two training files, and why they are not one file
+
+**What they are** (both synthetic CSVs with the same 68 columns; neither is an Excel file):
+
+| | `synthetic_fixed_date_salud.csv` | `synthetic_snapshots_salud.csv` |
+|---|---|---|
+| One row = | one patient, as of **2026-04-01** | one **call**, as of the moment the call happened |
+| Rows | 1,794 patients (1 row each) | 9,283 calls from 1,974 patients (median 4 calls each, up to 15) |
+| Dates | all the same day | Oct 2024 – Mar 2026 |
+| Call fields (21) | all empty / 0 (no call happened) | filled in |
+| Pay rate | 35% (`paid_30d`) | 43% after the call (`paid_after_call_30d`); 20% paid on the call |
+| Trains | pre-call model | post-call model (the 7,400 rows with `paid_on_call = 0`) |
+
+**Why not one file:** a row is a photo of a patient on one date. The features (balance, days since the last payment) and the
+30-day label change with that date, so the same patient yields different rows on different dates. The pre-call question
+("who to call on a given day") needs one photo per patient on one day; the post-call question needs a photo at every call,
+with what happened on it. 1,770 patients appear in both files, with different values.
+
+**Could the pre-call model use the call file?** Yes; the 21 call columns would just be ignored. Notebook 09 found training on
+either gives the same AUC (LR 0.861 both). The fixed file is kept for pre-call because it matches how the model is used
+(score everyone on one day), gives one row per patient (no patient counted 5×), and is the design whose effects
+the world was built around (0.867 vs 0.684 when *evaluated* on call rows, notebook 00).
+
+**Learned:** "one file per question" was never explained to the user; the dictionary's `in_current_models` column plus this table do.
 
 ---
 
@@ -182,6 +342,11 @@ models and real QA. The layout now lists `final_package.py`, `propensity/`, `not
 3. **Transactions after Nov 2, 2026**, which would complete the 30-day window for the 3 calls from Oct 8–9.
 4. The average cost per call, to set the calling cut-off.
 5. The Guarantors tab, plus the ExcludeTransaction and FinancialClass fields.
+6. *(added 2026-11-18, watch item 19)* Per call: the promised amount and promised date. Per account: payment plan start date,
+   monthly amount, due day, and plan payment history with dates (`OnPaymentPlan` and the plan's last payment date are empty).
+7. *(added 2026-11-18)* Which time frame matters to Salud's business: their call cycle, statement cycle, and when an
+   account counts as "worked". The 30-day label is our choice (most predictable in notebook 09, matches the monthly
+   statement cycle), not a Salud requirement. In the real 58, 29 paid within 30 days: 12 on the call day, 11 within 2 weeks.
 
 Items 2 and 3 alone could raise the real test from 58 to 79 rows.
 

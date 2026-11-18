@@ -88,6 +88,10 @@ class Realism:
     ptp_keep_scale: float = 1.0            # multiplies the chance a promise to pay is kept
     outbound_skip_paying: float = 0.0      # collections campaigns skip patients who are currently paying
     pay_by_phone: float = 0.0              # a paying patient makes the month's payment by calling in
+    call_delay_days: float | None = None   # calls follow a random account's placement by Exp(mean) days;
+                                           #   None = spread evenly over the whole history (as before)
+    phone_pay_max_months: float | None = None  # pay by phone only within this many months of the latest placement
+    plan_on_promise: float = 0.0           # promise-to-pay calls that set up a plan, first payment on the promised date
 
 
 @dataclass

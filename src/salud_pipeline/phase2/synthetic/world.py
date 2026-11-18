@@ -370,7 +370,17 @@ def simulate_connected_call(w: World, g: Guarantor, when: pd.Timestamp, directio
                 a.plan_amount = round(a.balance / n, 2)
                 heapq.heappush(events, (post_at, "plan", a.aid, a.plan_amount))
             pay_now = sum(a.plan_amount for a in open_accts)
-    if result == "promised_to_pay" and open_accts:
+    if result == "promised_to_pay" and open_accts and R and R.plan_on_promise and rng.random() < R.plan_on_promise:
+        # a plan set up on the call, first instalment on a later date (kept or missed by the plan process)
+        days = int(rng.integers(3, 22))
+        promise_date = (when + pd.Timedelta(days=days)).strftime("%m/%d")
+        actions.append("set_up_plan")
+        n = int(rng.integers(4, 13))
+        for a in open_accts:
+            a.on_plan = True
+            a.plan_amount = round(a.balance / n, 2)
+            heapq.heappush(events, (when + pd.Timedelta(days=days), "plan", a.aid, a.plan_amount))
+    elif result == "promised_to_pay" and open_accts:
         days = int(rng.integers(3, 22))
         promise_date = (when + pd.Timedelta(days=days)).strftime("%m/%d")
         p_keep = (0.35 + 0.35 * g.ability + 0.2 * g.willingness) * (R.ptp_keep_scale if R else 1.0)
@@ -493,15 +503,24 @@ def simulate_history(w: World, g: Guarantor) -> None:
     first = min(a.placement for a in accts)
     events: list = []  # (time, kind, account id, amount)
 
+    R = cfg.realism
+    delay = R.call_delay_days if R else None
+
+    def call_time(min_days: int) -> pd.Timestamp | None:
+        if delay is None:   # original behaviour: anywhere between the first placement and the cutoff
+            return w.rand_time(first + pd.Timedelta(days=min_days), w.cutoff - pd.Timedelta(days=1))
+        anchor = accts[int(rng.integers(len(accts)))].placement   # soon after one of the patient's placements
+        lo = anchor + pd.Timedelta(days=min_days + float(rng.exponential(delay)))
+        return w.rand_time(lo, lo + pd.Timedelta(days=1)) if lo < w.cutoff - pd.Timedelta(days=1) else None
+
     n_attempts = 1 + int(rng.poisson(cfg.mean_contact_attempts))
     for _ in range(n_attempts):
-        heapq.heappush(events, (w.rand_time(first + pd.Timedelta(days=3), w.cutoff - pd.Timedelta(days=1)),
-                                "contact", "", 0.0))
-    R = cfg.realism
+        if (when := call_time(3)) is not None:
+            heapq.heappush(events, (when, "contact", "", 0.0))
     # Patient-initiated inbound calls scale with willingness.
     for _ in range(int(rng.poisson((0.4 + 1.2 * g.willingness) * (R.inbound_scale if R else 1.0)))):
-        heapq.heappush(events, (w.rand_time(first + pd.Timedelta(days=5), w.cutoff - pd.Timedelta(days=1)),
-                                "inbound", "", 0.0))
+        if (when := call_time(5)) is not None:
+            heapq.heappush(events, (when, "inbound", "", 0.0))
     if R:
         _schedule_realism(w, g, accts, first, events)
     # Spontaneous (statement-driven) payments (original world only; realism uses the monthly habit instead).
@@ -593,7 +612,9 @@ def _habit_month(w: World, g: Guarantor, accts: list[Account], when: pd.Timestam
             return
     a = min(open_accts, key=lambda x: x.placement)
     amount = a.balance * float(rng.uniform(R.plan_fraction_low, R.plan_fraction_high)) if a.balance > 30 else a.balance
-    if when <= w.cutoff and rng.random() < R.pay_by_phone:
+    recent = (R.phone_pay_max_months is None or
+              (when - max(a.placement for a in open_accts)).days <= 30 * R.phone_pay_max_months)
+    if when <= w.cutoff and recent and rng.random() < R.pay_by_phone:
         _phone_payment(w, g, accts, open_accts, when, a, amount, events)
     else:
         w.post(a, when, amount, S.TXN_PAYMENT, S.PAY_PATIENT)

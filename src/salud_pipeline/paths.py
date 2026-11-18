@@ -36,6 +36,9 @@ PHASE2_DATA = DATA / "phase2"
 PHASE2_SYNTHETIC_WORLD = PHASE2_DATA / "synthetic_world"       # synthetic accounts, payments, contacts (original)
 # Synthetic worlds for the propensity work. "salud" is tuned to Salud's final package (configs/synthetic_world_salud.json,
 # checked with salud-synth-calibrate); "original" is the first world, kept for comparison.
-PHASE2_WORLDS = {"original": PHASE2_SYNTHETIC_WORLD, "salud": PHASE2_DATA / "synthetic_world_salud"}
+# "master" (configs/synthetic_world_master.json) covers Salud's time frame up to 2026-11-18; it feeds the master file
+# reports/phase2/pre_training_data.xlsx (salud-propensity master).
+PHASE2_WORLDS = {"original": PHASE2_SYNTHETIC_WORLD, "salud": PHASE2_DATA / "synthetic_world_salud",
+                 "master": PHASE2_DATA / "synthetic_world_master"}
 DEFAULT_WORLD = "salud"
 PHASE2_REPORTS = REPO_ROOT / "reports" / "phase2"              # propensity sheet, experiments, scores
