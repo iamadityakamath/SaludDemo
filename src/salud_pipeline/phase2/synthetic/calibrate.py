@@ -72,7 +72,14 @@ def statistics(calls: pd.DataFrame, snap: pd.DataFrame, accounts: pd.DataFrame) 
     for k, pat in [("shared balance", "Verbally Shared"), ("payment plan", "Payment Plan"),
                    ("financial assistance", "FA |Financial Assistance"), ("statement / itemized bill", "Statement|Itemized")]:
         s[("call mix", f"action: {k}")] = acts.str.contains(pat).mean()
+    acts_l = acts.str.lower()
+    s[("call mix", "action: insurance")] = (acts_l.str.contains("insurance") & ~acts_l.str.contains("coinsurance")).mean()
     agent = calls["disposition"].eq("Spoke with CSR")
+    s[("call mix", "asked about financial assistance")] = calls["asked_fa"].eq("Yes").mean()
+    s[("call mix", "collection attempt blank, agent calls")] = calls.loc[agent, "collection_attempt"].isna().mean() \
+        if agent.any() else np.nan
+    s[("call mix", "collection attempt yes, phone-menu calls")] = \
+        calls.loc[calls["disposition"].fillna("").str.contains("IVR"), "collection_attempt"].eq("Yes").mean()
     s[("call mix", "talk seconds, agent calls (median)")] = calls.loc[agent, "talk_seconds"].median() if agent.any() else np.nan
 
     rel = snap[snap["label_reliable"]]

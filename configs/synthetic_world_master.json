@@ -34,6 +34,10 @@
     "call_delay_days": 35,
     "phone_pay_max_months": 3,
     "adjustment_p": 0.09,
-    "plan_on_promise": 0.25
+    "plan_on_promise": 0.25,
+    "salud_collection_attempt": true,
+    "same_day_posting": true,
+    "asked_fa_rate": 0.17,
+    "insurance_review_p": 0.1
   }
 }

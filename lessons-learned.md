@@ -117,3 +117,27 @@ Newest entries go at the top of each section. (Kept up to date with every task; 
   calls at all (the world's calls ended the day before), so the pre-call model learned "pays without a call"
   while the real test asked "pays when called". Fixed by a world whose calls run through the whole period.
 - **New generator options default to off** so older worlds regenerate byte for byte; compare the CSVs after any change.
+- **Sampled synthetic values must take the same *set* of values as the real ones**, not just a similar distribution.
+  Continuous QA against real QA's 12 values let a classifier spot synthetic rows at once.
+- **Blank is not "no".** Salud's agents leave `CollectionAttempt` blank; reading blank as "no" turned it into a
+  phone-menu flag. Check the fill rate by call type before using a yes/no field.
+- **Trace one real record end to end before trusting a field's description.** `EpicPaymentPlanNumberofPayments` says
+  "payments made", but it repeats across a patient's accounts and exceeds the months since placement: it counts
+  hospital-side plan payments that Salud's transactions don't contain. Reconcile the tables against each other
+  (receipts vs transactions, balance identity) to see what history is really there.
+- **Match labels exactly, not by substring.** `has("Insurance")` also matched "Coinsurance". List every option label
+  with the flags it sets and its real/synthetic counts; that table shows such slips at once.
+- **Keep an independent recomputation script for the training file.** Rebuilding the features from raw tables with
+  different code (and codes decoded by number) is the cheapest proof that the pipeline maps the data right.
+- **Fix the solver's random_state for L1 (liblinear/saga).** Unseeded, two identical runs kept different features
+  (14 vs 7). Check reproducibility by hashing the saved output of two runs.
+- **Don't read L2 weights at a near-zero penalty when features are near-duplicates:** twins get large opposite-sign
+  weights that cancel. Pick the penalty with the one-SE rule and read weights alongside the correlation table.
+- **Score a feature-selection method with nested CV before believing "k features are enough".** Chosen and scored
+  on the same rows, top 5 matched all features (0.706 vs 0.708); nested, it lost 0.015.
+- **Cross-check linear importance with a tree model.** LightGBM ranked days since last payment first, which the
+  linear model (with its log transform) under-ranked.
+- **Small real test sets need within-fold AUC.** With many tied rows, pooling predictions from different fold models
+  ranks the ties by noise; leave-one-out biases AUC down. Score within each fold and average over repeats.
+- **Test instruction files by running their code blocks exactly as written.** That is what found the WoE
+  binning bug (yes/no fields in a single bin).

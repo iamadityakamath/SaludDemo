@@ -215,12 +215,15 @@ data/phase2/synthetic_world_salud/
 
 **Master file (next training data):** `salud-propensity master` writes `reports/phase2/pre_training_data.xlsx`, one row per
 call for both models. Synthetic rows come from the master world (`configs/synthetic_world_master.json`: Salud's time frame,
-calls up to 2026-11-18, 51/51 statistics; generate it with
+calls up to 2026-11-18, 55/55 statistics; generate it with
 `salud-synth --config configs/synthetic_world_master.json --out data/phase2/synthetic_world_master --transcripts none`);
 real rows are Salud's 84 calls. Columns `data_type` (synthetic / real), `split` (train / test by patient, real_test),
 `label_usable` and `post_call_row` select the rows; the pre-call model uses the 11 history columns, the post-call model
 32. Synthetic sentiment and QA are sampled from the real calls with the same outcome. The notebooks still use the
 earlier files until they are re-run.
+Feature selection: [`feature-selection.md`](feature-selection.md) (notebook 13: which features matter, how it was checked, the saved sets).
+Checks: `salud-propensity master` runs 26 integrity checks before writing; `salud-propensity verify` rebuilds every model
+field and target from the raw tables with separate code and reports mismatches.
 
 - **Pre-call:** one row per synthetic patient with an open balance on 2026-04-01. The label is any payment within 30 days; the features
   are 11 that exist in Salud's data. 86 variants are compared in `notebooks/00`–`11` with repeated grouped 5×5 cross-validation, and the

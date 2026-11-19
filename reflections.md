@@ -114,7 +114,7 @@ Real-data numbers come from very few rows, so treat them as directions, not meas
     - Calls: `CollectionResult` says *what* happened (17 "Promised to Pay"), but not when or how much. `CallbackDate` is
       empty and `RequestedCallback` is "No" on all 84. `PaymentAmount` is filled on 15 calls (paid on the call).
     - Accounts (290, one snapshot as of the extract): current balance, receipts, adjustments, statement count and last
-      statement date, plan payments made (132 > 0) and missed (17 missed 1). Empty: `OnPaymentPlan`, plan last payment
+      statement date, Epic plan payment counts (see item 24: these are hospital-side plan payments, not Salud transactions). Empty: `OnPaymentPlan`, plan last payment
       date, `FirstStatementDate`, `LastPlacementDate`, `SelfPayBalanceDate`. No amount due, minimum payment,
       statement amount or due date anywhere.
     - Transactions (499, Feb 2024 – Nov 2 2026, 44 guarantors) are the only dated history: 230 patient payments,
@@ -130,6 +130,8 @@ Real-data numbers come from very few rows, so treat them as directions, not meas
     - **Quick test (2 × 5 folds, not logged):** adding the amounts changes CV by at most +0.006 (LR 0.866 → 0.872; LightGBM
       0.867 → 0.871) and the synthetic holdout by ≤ 0.003. The real-58 moves (0.643–0.719) are inside its CI (±0.15), so they are noise.
     - **Recommended (user to confirm):** keep 11 fields for now (simpler, same accuracy). Revisit with more real data, when amounts could matter.
+    - **Update 2026-11-18 (master file EDA):** in the master world the amount twins are duplicates again (ρ 0.96–0.99), so the
+      drop is justified there; `days_since_last_discharge` is not (ρ 0.71) and could be tried.
 21. **The pre-call label means something different in training and in the real test.** `fixed` (found 2026-11-18)
     - **Update 2026-11-18:** fixed in the master world: calls run to 2026-11-18, so every 30-day window includes calls, as in the real test.
     - **Training (fixed date):** `paid_30d` = any patient payment from Apr 1 to May 1, 2026. The synthetic world's calls end on
@@ -142,6 +144,142 @@ Real-data numbers come from very few rows, so treat them as directions, not meas
     - **Options:** (a) extend the synthetic world's calls past Apr 1 so the fixed-date label includes calls;
       (b) train pre-call on the call file (call-day snapshots, call fields ignored), which matches the real test;
       (c) keep as is and document. (b) is the cheapest and also addresses item 17.
+
+22. **Salud leaves `collection_attempted` blank on agent calls.** `fixed` (found 2026-11-18, notebook 12)
+    - Real: blank on 64 of 67 agent calls, "Yes" on 94% of phone-menu calls; blank reads as "no", so in real data the field
+      only means "phone-menu call". Synthetic fills it properly (85% of agent calls). It is the main field that tells
+      synthetic post-call rows from real ones (adversarial AUC 0.962 → 0.897 without it).
+    - **Recommended:** drop it from the post-call fields.
+    - **Update 2026-11-18:** the master world now fills CollectionAttempt like Salud (`salud_collection_attempt`): blank on 96% of agent calls (real 96%), "Yes" on campaign IVR calls. In both worlds the field now only repeats `spoke_with_agent`; it can be dropped from the model without loss. Post-call adversarial AUC 0.962 → 0.877.
+23. **Other call fields off between synthetic and real.** `fixed` (found 2026-11-18, notebook 12)
+    - Asked about financial assistance: real 14%, synthetic 1.5% (generator: hardship calls only). Insurance action: real 5%,
+      synthetic 12%. Neither is in the calibration list.
+    - Synthetic payments taken on a call post the next day 60% of the time (real: same day). Doesn't change `paid_30d`;
+      shifts `days_to_first_payment`.
+    - **Fix:** tune the generator and add the first two to `salud-synth-calibrate`.
+    - **Update 2026-11-18:** `asked_fa_rate` 0.17 (synthetic 17.4% vs real 14.3%), `insurance_review_p` 0.1 (1.4% vs 1.2%, after the coinsurance fix), `same_day_posting` (97% vs 91% on day 0). Four statistics added to `salud-synth-calibrate`; master world 55/55.
+24. **Salud's transactions only cover payments made through Salud since placement; hospital (Epic) plan payments are missing.** `open` (found 2026-11-18)
+    - Traced one patient (4 accounts placed Jun 22–28 2026, called Jul 1): transactions match Salud's received totals exactly, and
+      our row is right (4 accounts, $4,026 owed, no payment before the call, first payment Aug 18 → `paid_30d` = 0).
+    - Across all 290 accounts, patient-payment transactions match `SelfPayReceipts` for 283 (7 short by $265 in total), so
+      the history **since placement** is complete.
+    - But `EpicPaymentPlanNumberofPayments` is set per patient (same value on all accounts for 53 of 59 patients), is > 0 for
+      20 patients (132 accounts), and is larger than the months since placement for 113 of the 132 (median 24.5 vs 5
+      Salud transactions). So it counts payments on the **hospital's** payment plan, which never appear in Salud's
+      transactions. Our "payment history" fields therefore start at zero for every new placement (see item 1) even when the
+      patient has been paying the hospital for years.
+    - The field is a snapshot as of the extract, so it can't be used as is (it includes payments after the call).
+    - **Ask Salud:** the dated Epic plan history (start date, monthly amount, payments with dates), or at least the plan count
+      as of the placement date.
+25. **Our balance on the call day ignores adjustments and later charges.** `open` (found 2026-11-18)
+    - `balance_at_t` = placement balance − patient payments before the call. Salud's own identity (placement balance −
+      receipts − adjustments = current balance) fails for 67 of 290 accounts, mostly because the balance **went up** after
+      placement (median −$104; up to $25k): new charges or re-billing that no transaction shows.
+    - **Impact:** `balance_at_t` is right at placement and after payments, but misses adjustments and added charges.
+    - **Ask Salud:** a dated balance history, or the charge transactions.
+---
+
+## 2026-11-18 · Task files for six people (`Task/`)
+
+**Asked:** split the model building across six people, one self-contained instruction file per model family, each read
+by that person's AI assistant.
+
+**Decided with the user:** families = logistic regression, WoE scorecard, decision tree, random forest + extra trees,
+gradient boosting, other (kNN / SVM / MLP / naive Bayes); ensemble later from their saved predictions. The lead shares
+`pre_training_data.xlsx` privately. Each person may use the real rows to improve their model, **measured fairly**
+(never scored by a model that saw them; every look logged). Hand-back: own branch `task/<family>`, fixed formats.
+
+**Built:** `Task/1_…` to `Task/6_….md` (~560 lines each): project brief, setup (incl. `nbstripout --install`, which a
+fresh clone doesn't have), data check (shape, fingerprint, counts), which rows are for what, feature sets, real-data
+rules, one shared code block (identical in all six), family-specific variants and grids, choosing procedure,
+deliverables, git hand-back, checklist. `AGENTS.md` points assistants to their task file.
+
+**Caught by testing the code as written in the files:**
+1. Leave-one-patient-out on the real rows biased AUC down (removing a patient shifts the training pay rate against it).
+2. Pooling per-fold predictions on the real rows: 41 of 58 real rows share identical values on the 2 stable features,
+   so tiny differences between fold models ranked them at random (0.718 → 0.686 even with weight 0.001). Now: repeated
+   stratified grouped 5-fold over real patients, AUC within each fold, averaged (0.714 at every weight).
+3. The WoE binning put yes/no fields into one bin (post-call scorecard 0.701 vs 0.798 for LR); now one bin per value.
+The rule baseline is scored the same way: 0.716 (pre) / 0.720 (post) on real, 0.677 on synthetic test.
+
+**Would do differently:** run the instruction files' code exactly as written before calling them done (it is what
+found 2 and 3).
+
+---
+
+## 2026-11-18 · Feature importance with L1 / L2 / elastic net (notebook 13, rebuilt and verified)
+
+**Asked:** a notebook that gives regularized regression every feature and shows which carry weight; then, "run it again
+and make sure it is absolutely right", because the user will pick the features the models train on from it.
+
+**Prepared first:** two candidates from Salud's own transactions (`paid_share_so_far`, `last_payment_amount`), checked by
+`salud-propensity verify` (0 mismatches) and two new integrity checks (26/26); kept out of the older feature sets
+(`D.NEW_PRE_CANDIDATES`).
+
+**First version had four weaknesses (fixed in v2):**
+1. L2 strength at the grid edge: first C = 10 (twins with large opposite-sign weights), then one-SE at C = 0.001, where
+   L2 weights collapse to "each feature alone". Now: a wider grid (10⁻⁴…10²), L2 at its best C, and weight size is not
+   used for ranking.
+2. Accuracy per set was chosen and scored on the same rows. Added **nested selection**: it corrects "5 features are as
+   good as all" — honestly, top 5 loses ~0.015 AUC (pre-call 0.692 vs 0.707; post-call 0.782 vs 0.797).
+3. Only a linear model judged importance. Added LightGBM permutation importance: it ranks `days_since_last_payment` first
+   and uses `days_since_last_placement` and `last_payment_amount` (curved effects).
+4. `ever_paid` was an exact copy of the never-paid flag; dropped (guard cell asserts it).
+Also: unseeded liblinear/saga gave different L1 sets per run (fixed earlier).
+
+**Verified:** 9 guards pass; two full runs give identical outputs in every cell and the same feature-set file (md5
+709b8599…); top-5 overlap 0.8–1.0 under three other seeds; no feature points the opposite way in real data.
+
+**Result (tiers):** keep `n_payments_90d`, `days_since_last_payment` (+ post-call `action_payment_plan`, `promised_to_pay`);
+one per family of payment history and debt age; account counts, balances, insurance, adjustments, discharge, sentiment,
+QA add little. Sets saved for the model notebooks: stable, l1_one_se, current, top5/10/15, elastic_net, all.
+
+**Written up:** `feature-selection.md` (tiers, every feature's evidence, honest accuracy, the sets, limits); a
+`**Result:**` note under every output in notebooks 12 and 13, since outputs are stripped on commit.
+
+---
+
+## 2026-11-18 · Making sure the training data is right (master file audit)
+
+**Asked:** make sure the data we train on is right, after the user traced one account and doubted the mapping.
+
+**Done:**
+1. **Independent recomputation** (`salud-propensity verify`, `propensity/verify.py`: separate code from `snapshots.py`, raw tables, codes
+   decoded by number): all 11 pre-call fields, both targets and `window_complete` for all 79 real calls with a patient
+   and 600 random synthetic calls. **0 mismatches**; later transactions correctly ignored; every `call_id` and `as_of`
+   matches the raw contact history.
+2. **Integrity checks** `master.audit()`: 24 checks (unique ids, split, no shared patients, label logic, value ranges,
+   QA values, leak check: max single-field AUC 0.68). `salud-propensity master` refuses to write the file if any fails.
+3. **Mapping bug fixed:** `action_insurance` matched "Explained Coinsurance/Deductible/Copay" (a billing explanation).
+   Real rate 4.8% → 1.2%. Test added.
+4. **Generator made to fill call fields like Salud** (watch items 22, 23): blank CollectionAttempt on agent calls,
+   financial-assistance questions, rare insurance actions, same-day posting. Calibration extended to 55 statistics;
+   master world 55/55 (seeds 11 and 12); the Salud-tuned world still regenerates byte for byte.
+5. Master file rebuilt (8,833 rows: synthetic train 6,971 / test 1,778 calls, real 84); EDA notebook 12 re-run.
+
+**Known limits (not fixable from Salud's data):** history starts at placement with Salud; hospital plan payments are
+missing (item 24); the balance ignores later charges (item 25).
+
+**Would do differently:** reconcile the tables against each other (receipts vs transactions, action labels vs flags) at
+the first build, not after the user asked.
+
+---
+
+## 2026-11-18 · EDA of the master file (notebook 12)
+
+`notebooks/12_master_data_eda.ipynb` (generator kept in the session scratchpad as `make_nb_12.py`).
+- **Healthy:** steady synthetic call volume May 2023 – Nov 2026; train/test balanced (pay 0.556 / 0.555, no shared patients);
+  pay rates inside the real intervals (pre 0.56 vs 0.50; post 0.45 vs 0.36); the same fields carry signal in the same
+  direction, at similar strength (payments 90d: 0.68 synthetic, 0.72 real); 53% of repeat patients have mixed outcomes,
+  so grouped folds stay necessary.
+- **Fixed during the EDA:** synthetic QA was continuous (5,019 values) against 12 real values, so it gave synthetic rows
+  away. The sampler now snaps QA to the real values; master file rebuilt.
+- **Found:** watch items 22 (`collection_attempted` blank in Salud's data) and 23 (financial assistance, insurance action,
+  next-day posting). Adversarial AUC: pre-call 0.831 (old world 0.945), driven by placement timing (all real rows are from
+  one day); post-call 0.962, 0.897 without `collection_attempted`.
+- **Also checked (user question):** balance and payment fields come from Salud's transactions. "Share of the placement
+  balance paid so far" carries signal (AUC 0.65 synthetic, 0.72 real) but adds little to the 11 fields (LR: synthetic
+  test 0.694 → 0.701, real 0.766 → 0.784, inside the noise).
 
 ---
 
@@ -347,6 +485,9 @@ models and real QA. The layout now lists `final_package.py`, `propensity/`, `not
 7. *(added 2026-11-18)* Which time frame matters to Salud's business: their call cycle, statement cycle, and when an
    account counts as "worked". The 30-day label is our choice (most predictable in notebook 09, matches the monthly
    statement cycle), not a Salud requirement. In the real 58, 29 paid within 30 days: 12 on the call day, 11 within 2 weeks.
+8. *(added 2026-11-18, watch item 24)* The hospital-side (Epic) payment plan history with dates: what does
+   `EpicPaymentPlanNumberofPayments` count, and from when?
+9. *(added 2026-11-18, watch item 25)* A dated balance history or the charge transactions (67 accounts' balances rose after placement).
 
 Items 2 and 3 alone could raise the real test from 58 to 79 rows.
 

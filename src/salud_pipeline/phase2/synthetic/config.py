@@ -92,6 +92,10 @@ class Realism:
                                            #   None = spread evenly over the whole history (as before)
     phone_pay_max_months: float | None = None  # pay by phone only within this many months of the latest placement
     plan_on_promise: float = 0.0           # promise-to-pay calls that set up a plan, first payment on the promised date
+    insurance_review_p: float = 1.0        # share of insurance calls where "Requested Insurance Review" is recorded
+    asked_fa_rate: float = 0.0             # agent calls (not hardship) where the patient asks about financial assistance
+    salud_collection_attempt: bool = False # fill CollectionAttempt like Salud: blank on most agent calls, Yes on IVR calls
+    same_day_posting: bool = False         # money taken on a call posts the same day (else 1-30 hours later)
 
 
 @dataclass

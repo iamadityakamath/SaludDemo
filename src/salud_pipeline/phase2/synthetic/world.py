@@ -328,7 +328,7 @@ def simulate_connected_call(w: World, g: Guarantor, when: pd.Timestamp, directio
     if scenario == "hardship" or (g.hardship and items["understanding_needs"]):
         if items["understanding_needs"]:
             actions += ["provided_fa_options", "fa_paperwork_sent"]
-    if scenario == "insurance_issue" or result == "pursued_insurance":
+    if (scenario == "insurance_issue" or result == "pursued_insurance") and (not R or R.insurance_review_p >= 1.0 or rng.random() < R.insurance_review_p):
         actions.append("requested_insurance_review")
     if (scenario == "dispute" or result == "contested_balance") and (not R or rng.random() < R.dispute_itemized_p):
         actions.append("provided_itemized")
@@ -344,13 +344,13 @@ def simulate_connected_call(w: World, g: Guarantor, when: pd.Timestamp, directio
     if phone_payment:   # the habit's monthly payment, taken on the call
         acct, amount = phone_payment
         pay_now = round(min(amount, acct.balance), 2)
-        heapq.heappush(events, (when + pd.Timedelta(hours=int(rng.integers(1, 30))), "pay", acct.aid, pay_now))
+        heapq.heappush(events, (_post_time(w, when), "pay", acct.aid, pay_now))
         if pay_now >= acct.balance - 0.005 and result == "paid_account_full" and len(open_accts) == 1:
             result = "paid_guarantor_full"
         elif pay_now < acct.balance - 0.005:
             result = "paid_plan_full"
     elif open_accts and result in ("paid_account_full", "partial_payment", "paid_plan_full"):
-        post_at = when + pd.Timedelta(hours=int(rng.integers(1, 30)))
+        post_at = _post_time(w, when)
         if result == "paid_account_full":
             target = open_accts if rng.random() < 0.5 else [open_accts[0]]
             for a in target:
@@ -434,12 +434,14 @@ def simulate_connected_call(w: World, g: Guarantor, when: pd.Timestamp, directio
         "salud_ConnectionType": S.CONNECTION[direction],
         "salud_Contact_Type": S.CONTACT_TYPE[contact_type],
         "salud_CallDisposition": S.DISPOSITION["hung_up" if hung_up else "spoke_with_csr"],
-        "salud_CollectionAttempt": S.YES if collection_attempt else S.NO,
+        "salud_CollectionAttempt": (None if (R and R.salud_collection_attempt and rng.random() < 0.955)
+                                    else S.YES if collection_attempt else S.NO),
         "salud_CollectionResult": S.RESULT[recorded] if recorded else None,
         "salud_ActionsTaken": S.ACTIONS_SEP.join(str(S.ACTION[a]) for a in actions) or None,
         "salud_PaymentAmount": round(pay_now, 2) if pay_now > 0 else None,
         "salud_ReviewBalance": int(scenario != "third_party"),
-        "salud_inquireaboutfinancialassistance": int(scenario == "hardship"),
+        "salud_inquireaboutfinancialassistance": int(scenario == "hardship" or bool(
+            R and R.asked_fa_rate and not hung_up and rng.random() < R.asked_fa_rate)),
         "salud_RequestedCallback": int(not items["first_contact_resolution"] and transferred is None),
         "salud_CallbackDate": None,
         "salud_needsomeoneelsetransfer": int(transferred is not None),
@@ -668,6 +670,8 @@ def _contact_event(w: World, g: Guarantor, accts: list[Account], when: pd.Timest
                     ivr = "spanish_ivr" if g.language == "spanish" else "english_ivr"
                     row = _blank_contact(cid, g, when, "outbound_campaign", ivr)
                     row["salud_AgentCallTalkDuration"] = round(float(rng.uniform(20, 36)), 1)
+                    if R.salud_collection_attempt:   # Salud's campaign calls record an attempt
+                        row["salud_CollectionAttempt"] = S.YES
                     row["salud_Note"] = f"PayVow call attempted. The call was statused as: Sent to {'Spanish' if ivr == 'spanish_ivr' else 'English'} IVR"
                 else:
                     row = simulate_connected_call(w, g, when, direction, covered, cid, events)
@@ -701,6 +705,15 @@ def _contact_event(w: World, g: Guarantor, accts: list[Account], when: pd.Timest
     if row["salud_CallDisposition"] in (S.DISPOSITION["spoke_with_csr"], S.DISPOSITION["hung_up"]):
         if rng.random() < w.cfg.qa_review_rate:
             _qa_review(w, row, w.call_truth[-1])
+
+
+def _post_time(w: World, when: pd.Timestamp) -> pd.Timestamp:
+    """When money taken on a call posts: the same day in Salud's data (realism.same_day_posting), else 1-30 hours later."""
+    R = w.cfg.realism
+    if R and R.same_day_posting:
+        end = when.normalize() + pd.Timedelta(hours=23, minutes=59)
+        return min(when + pd.Timedelta(minutes=int(w.rng.integers(5, 121))), end)
+    return when + pd.Timedelta(hours=int(w.rng.integers(1, 30)))
 
 
 def _blank_contact(cid: str, g: Guarantor, when: pd.Timestamp, ctype: str, disp: str) -> dict:

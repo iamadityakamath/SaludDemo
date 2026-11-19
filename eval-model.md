@@ -18,10 +18,30 @@ Updated after each notebook.
 | Choosing | corrected resampled t-test (Nadeau–Bengio) + one-standard-error rule (simplest within 1 SE) | fold scores are correlated; prefer explainable models |
 | Feature sets | `FS_ALL` 23 · `FS_PRUNED` 14 (duplicates removed) · `FS_TRANSFER` 11 (also no prior-contact features, which the real data lacks) | notebook 00 §3–4 |
 
+## Feature importance on the master file (notebook 13, synthetic train, grouped 5-fold; reproducible)
+
+Chosen and scored on the same rows (optimistic for the chosen sets):
+
+| Model | Set (n) | LR | LightGBM |
+|---|---|---|---|
+| Pre-call | stable (2) | 0.692 | 0.692 |
+| Pre-call | top5 (5) | 0.706 | 0.692 |
+| Pre-call | l1_one_se (7) | 0.703 | 0.697 |
+| Pre-call | current (11) | 0.700 | 0.697 |
+| Pre-call | all (21) | 0.708 | 0.705 |
+| Post-call | stable (5) | 0.796 | 0.795 |
+| Post-call | l1_one_se (14) | 0.799 | 0.802 |
+| Post-call | current (32) | 0.795 | 0.790 |
+| Post-call | all (42) | 0.797 | 0.795 |
+
+**Honest (nested: selection redone inside each fold):** pre-call all 0.707 / nested L1 0.705 / nested top 5 0.692;
+post-call 0.797 / 0.790 / 0.782 (LR; LightGBM similar). SE ≈ 0.01. Sets in
+`reports/phase2/experiments/feature_sets_master.json`; full write-up in `feature-selection.md`.
+
 ## Next data: the master file (2026-11-18), quick check only
 
 `reports/phase2/pre_training_data.xlsx` (`salud-propensity master`): one row per call, synthetic (master world, Salud's
-time frame to 2026-11-18, 51/51 statistics) + Salud's 84 real calls. `split`: random 80/20 by patient for synthetic,
+time frame to 2026-11-18, 55/55 statistics) + Salud's 84 real calls. `split`: random 80/20 by patient for synthetic,
 `real_test` for real. It fixes three training-data problems: no calls in the pre-call label window, pre-call patients
 unlike the real ones, and no payment plans in post-call rows (reflections watch items 16, 17, 21).
 
@@ -34,6 +54,10 @@ Quick check (untuned, not logged to `results.csv`; train = synthetic `train`, `l
 | Post-call LR | 32 | 0.793 | 0.696 (47) | 0.34 vs 0.36 |
 | Post-call LightGBM | 32 | 0.793 | 0.765 (47) | 0.41 vs 0.36 |
 | Rule B-03 | – | – | 0.718 (58) | – |
+
+EDA (notebook 12) and audit: 0 mismatches against an independent rebuild from the raw tables; 24 integrity checks run on
+every build; `action_insurance` no longer counts coinsurance explanations; call fields now filled like Salud's (55/55).
+The quick-check numbers above are from before these fixes; the notebooks will give the real ones.
 
 Real CIs are about ±0.15, so these are directions. The notebooks below still use the old files and must be re-run on the
 master file before any of this replaces the current status.

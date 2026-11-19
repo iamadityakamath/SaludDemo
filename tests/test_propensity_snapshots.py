@@ -168,5 +168,14 @@ def test_master_split_sampler_and_groups():
     out = sample_scores(pd.concat([real] * 20, ignore_index=True), s)
     for c in SCORES:   # inside the real range, and paid calls score higher, as in the real data
         assert out[c].min() >= real[c].min() - 1e-4 and out[c].max() <= real[c].max() + 1e-4   # 4-decimal rounding
+    assert set(out["qa_score"].round(4)) <= set(real["qa_score"].round(4))   # QA only takes real values
     big = pd.concat([real] * 20, ignore_index=True)
     assert out["qa_score"][outcome_group(big) == "paid"].mean() > out["qa_score"][outcome_group(big) != "paid"].mean()
+
+
+def test_insurance_flag_ignores_coinsurance():
+    from salud_pipeline.phase2.propensity.snapshots import _flags
+
+    assert not _flags("Verbally Shared Balance(s); Explained Coinsurance/Deductible/Copay")["action_insurance"]
+    assert _flags("Requested FA Paperwork; Added Insurance Information")["action_insurance"]
+    assert _flags("Requested Insurance Review")["action_insurance"]

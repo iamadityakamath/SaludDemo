@@ -73,6 +73,12 @@ COLUMNS: list[Col] = [
     Col("amount_paid_ever", "pre", "Payment history", "$ of all patient payments before t", "transactions"),
     Col("days_since_last_payment", "pre", "Payment history", "Days since the last patient payment (empty if none)",
         "transactions"),
+    Col("paid_share_so_far", "pre", "Payment history",
+        "Share of the placement balance the patient has paid since the first placement, before t (0-1)",
+        "accounts + transactions", "patient payments since the first placement / placement balance, capped at 1",
+        "added 2026-11-18 as a candidate (not in the old CSVs)"),
+    Col("last_payment_amount", "pre", "Payment history", "$ of the most recent patient payment day before t (0 if none)",
+        "transactions", "", "added 2026-11-18 as a candidate (not in the old CSVs)"),
 
     # ---- pre-call: insurance ----
     Col("n_insurance_payments_365d", "pre", "Insurance activity", "Insurance payments in the 365 days before t",
@@ -177,7 +183,9 @@ def names(use: str | tuple[str, ...]) -> list[str]:
 # Numeric / boolean features each model may use. Label-type text columns (connection_type, disposition,
 # collection_result, contact_type) stay in the sheet for reading but are represented by the flags above.
 TEXT_ONLY = {"connection_type", "contact_type", "disposition", "collection_result", "payment_on_call"}
-PRE_FEATURES = names("pre")
+# Candidates added on 2026-11-18 exist only in the master file, so the older feature sets (and CSVs) leave them out.
+NEW_PRE_CANDIDATES = ["paid_share_so_far", "last_payment_amount"]
+PRE_FEATURES = [c for c in names("pre") if c not in NEW_PRE_CANDIDATES]
 POST_FEATURES = PRE_FEATURES + [c for c in names("post") if c not in TEXT_ONLY]
 
 

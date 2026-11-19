@@ -51,7 +51,8 @@ def _flags(actions) -> dict:
         "action_payment_plan": has("Set Up Payment Plan", "Update Payment Plan"),
         "action_financial_assistance": has("Financial Assistance", "FA Paperwork"),
         "action_statement_or_bill": has("Statement", "Itemized Bill"),
-        "action_insurance": has("Insurance"),
+        # insurance work only: "Explained Coinsurance/Deductible/Copay" is a billing explanation, not insurance
+        "action_insurance": any("insurance" in a.lower() and "coinsurance" not in a.lower() for a in acts),
         "n_actions": len(acts),
     }
 
@@ -132,6 +133,10 @@ def build(world: World, sentiment: pd.DataFrame | None = None, qa: pd.Series | N
             "n_payments_365d": len(p365), "amount_paid_365d": round(float(p365["amount"].sum()), 2),
             "n_payments_ever": len(pay), "amount_paid_ever": round(float(pay["amount"].sum()), 2),
             "days_since_last_payment": _days(day, pay["day"].max() if len(pay) else None),
+            "paid_share_so_far": round(min(float(pay_since_place) / placement_balance, 1.0), 4)
+            if placement_balance > 0 else np.nan,
+            "last_payment_amount": round(float(pay.loc[pay["day"] == pay["day"].max(), "amount"].sum()), 2)
+            if len(pay) else 0.0,
 
             "n_insurance_payments_365d": len(ins365), "amount_insurance_365d": round(float(ins365["amount"].sum()), 2),
             "n_adjustments_365d": len(adj365), "amount_adjustments_365d": round(float(adj365["amount"].abs().sum()), 2),

@@ -7,6 +7,7 @@
     salud-propensity sentiment --synthetic # score the synthetic transcripts (local model, slow, cached)
     salud-propensity master                # master file: synthetic (master world) + real calls, one row per call
                                            #   -> reports/phase2/pre_training_data.xlsx
+    salud-propensity verify                # rebuild the master file's fields from the raw tables (separate code)
     salud-propensity qa                    # Stage 1 QA of the 84 real calls with the dashboard's prompt
                                            #   (SENDS the redacted transcripts to the LLM provider; cached)
 
@@ -126,11 +127,26 @@ def cmd_qa(args) -> None:
 
 def cmd_master(args) -> None:
     from .master import MASTER_XLSX, build_master, write_master
+    from .master import audit
     df = build_master(args.world)
+    checks = audit(df)
+    for name, ok, detail in checks:
+        if not ok:
+            print(f"  FAIL {name}: {detail}")
+    if not all(ok for _, ok, _ in checks):
+        raise RuntimeError("master file failed its integrity checks; not written")
+    print(f"Integrity checks: {len(checks)}/{len(checks)} passed")
     write_master(df)
     print(f"Wrote {MASTER_XLSX} ({len(df)} rows)")
     print(df.groupby(["data_type", "split"]).agg(rows=("call_id", "size"), patients=("guarantor_id", "nunique"),
                                                 usable=("label_usable", "sum"), pay_rate=("paid_30d", "mean")).round(3))
+
+
+def cmd_verify(args) -> None:
+    from .verify import main as verify
+    if verify(args.sample):
+        raise RuntimeError("the master file does not match an independent rebuild from the raw tables")
+    print("Verify: every checked field matches the raw tables.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -146,9 +162,11 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--limit", type=int, help="maximum new LLM requests this run")
     m = sub.add_parser("master", help="the master file: synthetic + real calls, one row per call (pre_training_data.xlsx)")
     m.add_argument("--world", choices=sorted(PHASE2_WORLDS), default="master")
+    v = sub.add_parser("verify", help="rebuild the master file's fields from the raw tables with separate code and compare")
+    v.add_argument("--sample", type=int, default=600, help="synthetic rows to check (all real rows are checked)")
     args = ap.parse_args(argv)
     try:
-        {"build": cmd_build, "sentiment": cmd_sentiment, "qa": cmd_qa, "master": cmd_master}[args.cmd](args)
+        {"build": cmd_build, "sentiment": cmd_sentiment, "qa": cmd_qa, "master": cmd_master, "verify": cmd_verify}[args.cmd](args)
     except RuntimeError as e:
         sys.exit(f"Error: {e}")
     return 0
