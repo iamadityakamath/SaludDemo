@@ -179,6 +179,54 @@ Real-data numbers come from very few rows, so treat them as directions, not meas
     - **Ask Salud:** a dated balance history, or the charge transactions.
 ---
 
+## 2026-11-19 · Salud's package calls in the app, logo moved, model folders, model-storage plan
+
+**Salud's package calls:** 76 of the 84 final-package transcripts weren't in Agent Call Reviews (8 are the earlier real
+calls). User chose to add them as Phase 1 calls. `phase1.calls` only accepted three sources, so migration 010 adds
+`salud`; `python -m salud_app.phase1.import_package` adds the calls, scores sentiment locally and stores the AI reviews
+**from the Groq cache only** (all 76 were cached by the Stage 1 QA run). Tried on the test branch first (dry run, import,
+re-run changes nothing, app shows 76 done), then on the team database with the user's go-ahead: 76 added, 76 scored,
+76 reviews from cache, 0 Groq calls. Phase 1 agreement unchanged (computed on tagged calls only); the website doesn't
+list them. Migration applied on its own, not through the full runner (lesson from migration 008).
+
+**Logo:** `branding/` removed; the logo is now `app/frontend/public/salud-logo.png`, served by the frontend (the backend
+route is gone). The old dashboard and its Vercel config point at the new place, so the website keeps its logo.
+
+**Task files:** each person now works in `Phase 2/notebooks/<model family>/` (notebook, results, predictions, report);
+the six folders exist with a README and status table. All six files' code re-run from inside their folders.
+
+**Model storage (plan only):** `Phase 2/progress/model-storage-plan.md`: ONNX files and preprocessing parameters in a
+private Neon bucket (project region aws-us-east-2 supports storage), a `phase2.models` registry table, backend module
+`salud_app/ml/`, and a `save_model()` helper with an ONNX-vs-scikit-learn parity check. Open: who uploads; when to add
+`save_model()` to the task files. Found while planning: models pickled from notebooks would reference classes defined
+only in the notebook, so the backend couldn't load them; ONNX plus shared preprocessing avoids that.
+
+---
+
+## 2026-11-19 · Agent Call Reviews rebuilt in the app to match the team dashboard
+
+**Asked:** the same functionality and exactly the same UI as https://agent-call-analysis.vercel.app in the new app
+(Groq for the AI review, a Hugging Face model for sentiment), reviewing the Phase 1 code.
+
+**Built:** `app/backend` ported (not imported) from `src/salud_pipeline/phase1` and `sentiment`: Groq client, review
+prompt `assist-v2` with evidence checks, Hugging Face ONNX sentiment and call summary, the phase1-table writes,
+fill-in / Re-analyze / upload / 15 s sweep, same endpoint paths and response shapes. `app/frontend`: the dashboard page
+ported to React with the original stylesheet unchanged (same markup and class names); Home and Payment Propensity pages
+in the same brand. The app now **writes to the team database** like the website (uploads, sentiment, reviews).
+
+**Checked:** endpoint outputs equal to the old dashboard on all 68 calls (only the timestamp format differs); turns, Groq
+prompt and sentiment numbers byte-identical on 17 calls; upload → sentiment → Groq → re-analyze end to end on the Neon
+**test** branch with an invented call (removed afterwards); browser: same layout as the website, evidence/chart jumps,
+dialogs, search, no console errors; 15 backend tests; type-check and build.
+
+**Went wrong:** the auto-reloading backend restarted mid-edit, before the new dependency was installed, and sat crashed;
+the first comparison run then hung for 10 minutes (no per-request timeout). Restarted on the same port; timeouts added.
+
+**Open:** Salud's 84 final-package calls aren't in `phase1.calls`, so they aren't listed (same as the website); sign-in
+only matters once the app is deployed.
+
+---
+
 ## 2026-11-18 · New app skeleton (`app/`): FastAPI backend + React frontend
 
 **Asked:** a new app folder with frontend and backend (FastAPI), one UI for both phases, no login, home page with two

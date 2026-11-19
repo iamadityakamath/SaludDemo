@@ -2,7 +2,11 @@
 /*
 !/api
 !/src
-!/branding
+!/app
+/app/*
+!/app/frontend
+/app/frontend/*
+!/app/frontend/public
 !/pyproject.toml
 !/vercel.json
 !/requirements.txt

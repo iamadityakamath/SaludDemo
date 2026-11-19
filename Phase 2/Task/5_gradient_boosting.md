@@ -58,6 +58,13 @@ uv venv && uv pip install -e '.[dev,model]'      # or: python3 -m venv .venv && 
 .venv/bin/python -m ipykernel install --user --name salud --display-name "Salud (project venv)"
 ```
 
+**On Windows** (PowerShell): `py -3.11 -m venv .venv`, then `.venv\Scripts\pip install -e ".[dev,model]"`,
+`.venv\Scripts
+bstripout --install` and `.venv\Scripts\python -m ipykernel install --user --name salud`. Wherever this file
+says `.venv/bin/`, use `.venv\Scripts\`. Paths with a space (`Phase 2/...`) need quotes in the terminal.
+
+In Jupyter, VS Code or Cursor, pick the kernel **Salud (project venv)** for your notebook.
+
 **The data file.** Your lead sends you `pre_training_data.xlsx` through a private channel. Put it at
 `Phase 2/reports/pre_training_data.xlsx` (that folder is gitignored, so it is never committed). Do not upload
 it anywhere else, and do not pass it to any online service.
@@ -83,6 +90,11 @@ Expected: shape `(8833, 76)`, fingerprint `acd75c39fe5bfa98`, and
 | synthetic | train | 6,971 | 6,647 |
 
 If anything differs, stop and ask your lead for the current file.
+
+**Your folder.** Everything you produce goes in **`Phase 2/notebooks/gradient_boosting/`** (it already exists in the repo):
+create your notebook there as `Phase 2/notebooks/gradient_boosting/gradient_boosting.ipynb`. The shared code writes your results file and
+prediction files into the same folder, and you write your report there too. Open the notebook from that folder (Jupyter, VS Code or Cursor);
+the shared code finds the data from anywhere in the repo. Don't put files anywhere else in the repo.
 
 ## 4 · The data: which rows are for what
 
@@ -157,7 +169,7 @@ a model trained on synthetic data plus the other 4 groups, repeats this 10 times
   Synthetic cross-validation (thousands of rows, SE ≈ 0.01) is the precise measure; use real data as a second opinion.
 - Don't fit anything on the real rows outside the shared functions (no "fit, then score the same rows").
 
-## 7 · Shared code (copy into the first cell of your notebook, set `FAMILY = "gradient_boosting"`)
+## 7 · Shared code (copy into the first cell of your notebook; `FAMILY` is already set to `"gradient_boosting"`)
 
 Everyone uses this block unchanged, so results are comparable. It is self-contained (needs only pandas, numpy,
 scikit-learn; LightGBM for task 5). It provides:
@@ -171,7 +183,7 @@ scikit-learn; LightGBM for task 5). It provides:
 | `cv_eval(make_model, feats, target)` | grouped 5-fold CV on synthetic train → mean metrics + out-of-fold predictions |
 | `real_eval(make_model, feats, target, real_weight)` | fair real-data score (section 6); `real_weight` = 0, 1, 5, 20 … |
 | `rule_real_auc(target)`, `rule_scores(df)` | the baseline rule |
-| `log_result(variant, target, set_name, feats, params, cv, real)` | appends one row to `Phase 2/Task/results/gradient_boosting/results.csv` |
+| `log_result(variant, target, set_name, feats, params, cv, real)` | appends one row to `Phase 2/notebooks/gradient_boosting/results.csv` |
 | `final_model(make_model, feats, target, real_weight, variant, set_name, params)` | the final step (section 9) |
 
 `make_model` is a function with no arguments that returns a **new, unfitted** scikit-learn `Pipeline` whose last step
@@ -195,7 +207,7 @@ SEED = 42
 # The repository root, found from wherever the notebook runs (Jupyter starts in the notebook's own folder).
 ROOT = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "pyproject.toml").exists() and (p / "Phase 2").exists())
 DATA = ROOT / "Phase 2" / "reports" / "pre_training_data.xlsx"
-OUT = ROOT / "Phase 2" / "Task" / "results" / FAMILY            # committed: synthetic-only outputs
+OUT = ROOT / "Phase 2" / "notebooks" / FAMILY                    # your folder: notebook + committed, synthetic-only outputs
 PRIVATE = ROOT / "Phase 2" / "reports" / "tasks" / FAMILY       # NOT committed (gitignored): anything derived from real rows
 OUT.mkdir(parents=True, exist_ok=True); PRIVATE.mkdir(parents=True, exist_ok=True)
 
@@ -533,16 +545,16 @@ Commit on branch `task/gradient_boosting`:
 
 | File | Content |
 |---|---|
-| `Phase 2/notebooks/task_gradient_boosting.ipynb` | your work; runs top to bottom on a fresh kernel; outputs stripped by nbstripout |
-| `Phase 2/Task/results/gradient_boosting/results.csv` | written by `log_result` / `final_model`; one row per experiment, two `FINAL` rows |
-| `Phase 2/Task/results/gradient_boosting/synthetic_predictions_pre.csv`, `…_post.csv` | written by `final_model` (synthetic rows only) |
-| `Phase 2/Task/results/gradient_boosting/report.md` | your report, using the template below |
+| `Phase 2/notebooks/gradient_boosting/gradient_boosting.ipynb` | your work; runs top to bottom on a fresh kernel; outputs stripped by nbstripout |
+| `Phase 2/notebooks/gradient_boosting/results.csv` | written by `log_result` / `final_model`; one row per experiment, two `FINAL` rows |
+| `Phase 2/notebooks/gradient_boosting/synthetic_predictions_pre.csv`, `…_post.csv` | written by `final_model` (synthetic rows only) |
+| `Phase 2/notebooks/gradient_boosting/report.md` | your report, using the template below |
 
 **Do not commit:** `Phase 2/reports/` (the data and `Phase 2/reports/tasks/gradient_boosting/real_predictions_*.csv`), model files,
 anything with real rows. Send the `Phase 2/reports/tasks/gradient_boosting/` folder to your lead privately.
 **Do not change:** anything under `src/`, `tests/`, `configs/`, other people's folders, or the `Phase 2/Task/*.md` files.
 
-Report template (`Phase 2/Task/results/gradient_boosting/report.md`):
+Report template (`Phase 2/notebooks/gradient_boosting/report.md`):
 
 ```markdown
 # Gradient boosting (LightGBM, monotone) · results
@@ -560,7 +572,7 @@ Report template (`Phase 2/Task/results/gradient_boosting/report.md`):
 ## 12 · Hand back
 
 ```bash
-git add "Phase 2/notebooks/task_gradient_boosting.ipynb" "Phase 2/Task/results/gradient_boosting/"
+git add "Phase 2/notebooks/gradient_boosting/" "Phase 2/notebooks/gradient_boosting/"
 git status            # check: no data files, nothing under Phase 2/reports/
 git commit -m "Task 5: Gradient boosting (LightGBM, monotone) results"
 git push -u origin task/gradient_boosting

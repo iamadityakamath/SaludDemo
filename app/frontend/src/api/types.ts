@@ -1,78 +1,74 @@
-// Mirrors app/backend/salud_app/schemas.py. Keep the two in step.
+// Mirrors the backend responses (app/backend/salud_app/routers). Keep the two in step.
 
-export type Source = "real" | "synthetic" | "pasted";
-export type Role = "agent" | "caller" | "system" | "unknown";
+export type CallStatus = "done" | "processing" | "incomplete";
 
-export interface SentimentSummary {
-  caller_overall: number | null;
-  caller_start: number | null;
-  caller_end: number | null;
-  caller_shift: number | null;
-  caller_label: string | null;
-  caller_end_label: string | null;
-  agent_overall: number | null;
-  agent_label: string | null;
-}
-
-export interface CallSummary {
-  key: string;
-  source: Source;
-  dataset: "final" | "phase1";
-  contacted_at: string | null;
-  outcome: string | null;
-  caller_end_sentiment: number | null;
-  caller_end_label: string | null;
-  qa_score: number | null;
-  has_ai_review: boolean;
-  turns: number;
+export interface CallRow {
+  call_id: string;
+  source: "new" | "real" | "salud" | "synthetic";   // salud = Salud's final-package calls
+  file_id: string;
+  added_by: string | null;
+  added_at: string | null;
+  analyzed: boolean;
+  scored: boolean;
+  end_label: string | null;
+  status: CallStatus;
 }
 
 export interface CallList {
-  total: number;
-  items: CallSummary[];
+  me: string;
+  website: boolean;
+  llm: boolean;
+  items: string[];
+  definitions: Record<string, string>;
+  calls: CallRow[];
 }
 
-export interface Turn {
-  turn: number;
-  speaker: string;
-  role: Role;
-  text: string;
-  sentiment: number | null;
-  sentiment_label: string | null;
+export interface TranscriptTurn { n: number; speaker: string; text: string }
+export interface Transcript { text: string; turns: TranscriptTurn[] }
+
+export interface Evidence { turn: number; quote: string }
+
+export interface Analysis {
+  none?: boolean;
+  checklist?: Record<string, { answer: string | null; reason?: string; evidence?: Evidence[] }>;
+  sentiment?: { label: string | null; evidence?: Evidence[] };
+  outcome?: { label: string | null; evidence?: Evidence[] };
+  summary?: string;
+  coaching?: { item: string; tip: string; turn: number | null }[];
+  model?: string;
 }
 
-export interface AiReview {
-  model: string | null;
-  prompt_version: string | null;
-  summary: string | null;
-  outcome: string | null;
-  sentiment: string | null;
-  quality_score: number | null;
-  checklist: { item: string; answer: string | null; reason: string | null }[];
-  coaching: string[];
+// Call-level summary: caller_* and agent_* numbers (see sentiment/scoring.py).
+export interface SentimentCall {
+  call_turns: number;
+  caller_turns: number;
+  caller_overall: number;
+  caller_label: string;
+  caller_start: number;
+  caller_end: number;
+  caller_shift: number;
+  caller_end_label: string;
+  caller_min_score: number;
+  caller_min_turn: number;
+  caller_max_score: number;
+  caller_max_turn: number;
+  [k: string]: number | string;
 }
 
-export interface CallDetail extends CallSummary {
-  transcript: Turn[];
-  sentiment: SentimentSummary | null;
-  ai_review: AiReview | null;
-  call_facts: Record<string, string | number | null>;
+export interface Sentiment {
+  none?: boolean;
+  model?: string;
+  call?: SentimentCall;
+  turns?: { turn: number; role: string; score: number; magnitude: number; label: string }[];
 }
 
-export interface Health {
-  status: "ok" | "degraded";
-  database: boolean;
-  phase2_master_file: boolean;
-}
+export interface CallResult { sentiment: Sentiment; analysis: Analysis; notes: string[] }
+
+export interface Health { status: "ok" | "degraded"; database: boolean; phase2_master_file: boolean }
 
 export interface Phase2Part {
-  data_type: string;
-  split: string;
-  calls: number;
-  patients: number;
-  usable: number;
-  pay_rate_pre_call: number | null;
-  pay_rate_post_call: number | null;
+  data_type: string; split: string; calls: number; patients: number; usable: number;
+  pay_rate_pre_call: number | null; pay_rate_post_call: number | null;
 }
 
 export interface Phase2Summary {

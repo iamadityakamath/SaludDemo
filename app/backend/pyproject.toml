@@ -1,12 +1,16 @@
 [project]
 name = "salud-app-backend"
 version = "0.1.0"
-description = "FastAPI backend for the Salud app: agent call reviews (Phase 1) and payment propensity (Phase 2)"
+description = "FastAPI backend for the Salud app: agent call reviews (Phase 1: Groq AI review + Hugging Face sentiment) and payment propensity (Phase 2)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+    "onnxruntime>=1.18",   # the Hugging Face sentiment model (int8 ONNX), run locally
+    "tokenizers>=0.19",
+    "numpy>=1.26",
     "pydantic-settings>=2.4",
     "pandas>=2.2",
     "openpyxl>=3.1",

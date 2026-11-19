@@ -41,8 +41,8 @@ from .checklist import ITEM_DEFINITIONS, TRANSCRIPT_ITEMS
 from .prompt import split_turns
 from .store import Store
 
-BRANDING_DIR = REPO_ROOT / "branding"
-LOGO_NAMES = ["logo.svg", "logo.png", "logo.webp", "logo.jpg", "logo.jpeg"]
+BRANDING_DIR = REPO_ROOT / "app" / "frontend" / "public"     # the Salud logo, shared with the new app
+LOGO_NAMES = ["salud-logo.png", "logo.svg", "logo.png", "logo.webp", "logo.jpg", "logo.jpeg"]
 SESSION_COOKIE = "qa_session"
 SESSION_DAYS = 30
 CRON_SECONDS = 45   # stay inside the website's 60 s function limit (vercel.json maxDuration)

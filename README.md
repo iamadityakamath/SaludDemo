@@ -19,7 +19,7 @@ Phase 1's AI analyses (`phase1.ai_analyses`, joined to `big_synthetic` accounts)
 - **Sign-in:** data only loads after the team passcode and a name from the assignments. The session is an HttpOnly cookie, signed with a key derived from the passcode and valid for 30 days.
 - **Settings:** `DATABASE_URL` and `TEAM_PASSCODE` are stored as Vercel environment variables, never in the repo.
 - **Changing the passcode** in the Vercel settings (then redeploying) signs everyone out.
-- **What gets uploaded:** [`.vercelignore`](.vercelignore) uploads only `api/`, `src/`, `branding/` and config, so no client data or secrets are ever uploaded.
+- **What gets uploaded:** [`.vercelignore`](.vercelignore) uploads only `api/`, `src/`, the logo (`app/frontend/public/`) and config, so no client data or secrets are ever uploaded.
 
 Everything lives in the team's **shared Neon Postgres database** (project `salud-pipeline`, database `salud`): calls and transcripts, AI analyses and every rater's tags, plus the synthetic world for Phase 2. Teammates don't need any local data files.
 
@@ -221,7 +221,8 @@ real rows are Salud's 84 calls. Columns `data_type` (synthetic / real), `split` 
 `label_usable` and `post_call_row` select the rows; the pre-call model uses the 11 history columns, the post-call model
 32. Synthetic sentiment and QA are sampled from the real calls with the same outcome. EDA: `Phase 2/notebooks/01_master_data_eda.ipynb`;
 feature importance: `Phase 2/notebooks/02_feature_selection.ipynb`. Model building is split across six people:
-[`Phase 2/Task/`](Phase%202/Task/) (one self-contained instruction file per model family).
+[`Phase 2/Task/`](Phase%202/Task/) (one self-contained instruction file per model family); each person works in
+`Phase 2/notebooks/<model family>/`. Trained models will go to Neon object storage as ONNX ([plan](Phase%202/progress/model-storage-plan.md)).
 Feature selection: [`Phase 2/progress/feature-selection.md`](Phase%202/progress/feature-selection.md) (notebook 02: which features matter, how it was checked, the saved sets).
 Checks: `salud-propensity master` runs 26 integrity checks before writing; `salud-propensity verify` rebuilds every model
 field and target from the raw tables with separate code and reports mismatches.
@@ -291,16 +292,17 @@ src/salud_pipeline/
     synthetic/          synthetic world generator (salud-synth), calibration against Salud (salud-synth-calibrate)
     propensity/         snapshots, feature dictionary, modelling code, real QA (salud-propensity)
 api/                    Vercel entry point for the dashboard website
-app/                    the new app (FastAPI backend + React frontend): Agent Call Reviews and Payment Propensity; see app/README.md
+app/                    the new app (FastAPI + React): Agent Call Reviews (the team dashboard, rebuilt: Groq review + Hugging Face sentiment) and Payment Propensity; see app/README.md
 db/migrations/          Postgres schema as code (001 big_synthetic … 007 sentiment, 009 final package)
 configs/                phase1_synthetic_calls.txt, synthetic_world.json (original), synthetic_world_salud.json, synthetic_world_master.json (master file)
-branding/               dashboard logo
 tests/                  database tests use the Neon 'tests' branch
 data/                   Salud's source files, shared by both phases (gitignored)
 Phase 1/                call analysis: data/ and reports/ (gitignored), results/ (LLM vs ML decision), presentation/ (midpoint)
 Phase 2/                payment propensity:
-  notebooks/            01 EDA of the master file, 02 feature selection (L1 / L2 / elastic net)
+  notebooks/            01 EDA of the master file, 02 feature selection (L1 / L2 / elastic net), and one folder per
+                        model family (logistic_regression/, woe_scorecard/, decision_tree/, random_forest/,
+                        gradient_boosting/, other_models/): each person's notebook, results and report
   Task/                 one instruction file per model family (six people)
-  progress/             reflections (watch list), eval-model, lessons-learned, feature-selection
+  progress/             reflections (watch list), eval-model, lessons-learned, feature-selection, model-storage-plan
   data/, reports/       synthetic master world; pre_training_data.xlsx, real QA, experiments (gitignored)
 ```

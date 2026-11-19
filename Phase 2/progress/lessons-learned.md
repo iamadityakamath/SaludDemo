@@ -145,3 +145,11 @@ Newest entries go at the top of each section. (Kept up to date with every task; 
   unprotected until the ignore rules follow it.
 - **Notebook code must not assume the working directory.** Jupyter starts in the notebook's folder; find the repo
   root by walking up to `pyproject.toml`.
+- **Stage dependency installs before code that imports them when a server auto-reloads.** A reload mid-edit
+  crashes and waits silently; after dependency changes, restart on the same port and check `/api/health`.
+- **Port, then prove equality.** Running the old and new backends side by side and diffing every endpoint
+  (and hashing prompts / scores) is what makes "exact same functionality" a checked claim.
+- **Check a table's CHECK constraints before adding a new kind of row.** `phase1.calls` only accepted three
+  sources and tied `call_id` to `source/file_id`; a migration was needed before the import could work.
+- **Reuse paid-for results.** The Stage 1 QA cache already held Groq reviews for all 76 calls; importing from the
+  cache gave identical reviews with zero API calls.
