@@ -1,6 +1,6 @@
 """Independent check of the master file: rebuild the model fields and targets from the RAW tables with separate code.
 
-    salud-propensity verify      # real: Neon `final` (read only); synthetic: data/phase2/synthetic_world_master/crm
+    salud-propensity verify      # real: Neon `final` (read only); synthetic: Phase 2/data/synthetic_world_master/crm
 
 Deliberately does not use sources.py or snapshots.py: raw column names, option codes decoded by number. Prints mismatch
 counts only (no row contents). Any mismatch means the pipeline maps Salud's data differently from this definition.

@@ -7,7 +7,7 @@ Route 1, dashboard (each call's stored analysis; new transcripts are analyzed au
 
 Route 2, script (AI analysis of every call, then the comparison):
     salud-phase1 analyze      # LLM on calls without an analysis -> Neon (phase1.ai_analyses)
-    salud-phase1 compare      # AI vs every rater's tags -> reports/phase1/comparison/ (local Excel/CSV)
+    salud-phase1 compare      # AI vs every rater's tags -> Phase 1/reports/comparison/ (local Excel/CSV)
     salud-phase1 trial --version assist-v3   # another prompt version beside the dashboard's, both vs the tags
 
 Settings come from .env: DATABASE_URL (team database), GROQ_API_KEY / GROQ_MODEL (only `analyze` uses the LLM).

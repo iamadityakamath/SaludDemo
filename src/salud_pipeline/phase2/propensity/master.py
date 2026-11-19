@@ -1,6 +1,6 @@
 """The master modeling file: one row per recorded call, synthetic and real, for both models.
 
-    salud-propensity master      # -> reports/phase2/pre_training_data.xlsx (sheet "Model rows")
+    salud-propensity master      # -> Phase 2/reports/pre_training_data.xlsx (sheet "Model rows")
 
 Synthetic rows come from the master world (configs/synthetic_world_master.json: Salud's time frame, accounts from
 mid-2023, calls up to 2026-11-18, 55/55 calibration statistics). Real rows are Salud's 84 calls (Neon `final`).

@@ -67,7 +67,7 @@ Manual tagging is finished, and its page has been removed. The tags saved during
 ```bash
 .venv/bin/salud-phase1 analyze             # LLM on calls without an analysis -> phase1.ai_analyses
 .venv/bin/salud-phase1 analyze --limit 20  # cap new LLM requests this run
-.venv/bin/salud-phase1 compare             # AI vs every rater's tags -> reports/phase1/comparison/
+.venv/bin/salud-phase1 compare             # AI vs every rater's tags -> Phase 1/reports/comparison/
 ```
 
 - **`analyze`** only adds analyses for calls that have none.
@@ -118,7 +118,7 @@ Yes = `785570000` and No = `785570001`. NULL means "not scored" (Salud's rule fo
 
 ### Why the LLM and not ML
 
-On 60 synthetic test calls, the LLM agreed with the planted labels at checklist kappa **0.66**, against **0.15–0.38** for TF-IDF + logistic regression. Salud has about 10 real calls, far too few to train a classifier. See [`results/phase1_llm_vs_ml_2026-10-18/`](results/phase1_llm_vs_ml_2026-10-18/README.md). The ML code remains in git history (commit `487a6a7`).
+On 60 synthetic test calls, the LLM agreed with the planted labels at checklist kappa **0.66**, against **0.15–0.38** for TF-IDF + logistic regression. Salud has about 10 real calls, far too few to train a classifier. See [`Phase 1/results/phase1_llm_vs_ml_2026-10-18/`](Phase%201/results/phase1_llm_vs_ml_2026-10-18/README.md). The ML code remains in git history (commit `487a6a7`).
 
 ### Turn-level sentiment
 
@@ -137,19 +137,19 @@ On the 60 calls, the **end** label agrees with raters' sentiment tags about 75�
 
 Salud's final package has 84 real calls, only 58 of them usable for a 30-day payment label, which is far too few to train on.
 So models are trained on a **synthetic world** (a simulated call centre in Salud's own table format) and tested once on
-the real calls. Results, methods and known issues: [`eval-model.md`](eval-model.md) and the watch list at the top of
-[`reflections.md`](reflections.md).
+the real calls. Results, methods and known issues: [`Phase 2/progress/eval-model.md`](Phase%202/progress/eval-model.md) and the watch list at the top of
+[`Phase 2/progress/reflections.md`](Phase%202/progress/reflections.md).
 
 ### Two synthetic worlds
 
 | World | Config | Folder | Use |
 |---|---|---|---|
-| **`salud`** (default) | `configs/synthetic_world_salud.json` (realism mode) | `data/phase2/synthetic_world_salud` | Tuned to Salud's final package; all modelling uses it |
-| `original` | `configs/synthetic_world.json` | `data/phase2/synthetic_world` | First world (Oct 2026); loaded into Neon `big_synthetic`; its key effects pointed the wrong way, so its model failed on real data |
+| **`salud`** (default) | `configs/synthetic_world_salud.json` (realism mode) | `Phase 2/data/synthetic_world_salud` | Tuned to Salud's final package; all modelling uses it |
+| `original` | `configs/synthetic_world.json` | `Phase 2/data/synthetic_world` | First world (Oct 2026); loaded into Neon `big_synthetic`; its key effects pointed the wrong way, so its model failed on real data |
 
 ```bash
-.venv/bin/salud-synth --config configs/synthetic_world_salud.json --out data/phase2/synthetic_world_salud
-.venv/bin/salud-synth-calibrate --world data/phase2/synthetic_world_salud      # compare with Salud's data (needs DATABASE_URL)
+.venv/bin/salud-synth --config configs/synthetic_world_salud.json --out "Phase 2/data/synthetic_world_salud"
+.venv/bin/salud-synth-calibrate --world "Phase 2/data/synthetic_world_salud"      # compare with Salud's data (needs DATABASE_URL)
 .venv/bin/salud-propensity build                                               # modelling files (real + synthetic)
 ```
 
@@ -159,7 +159,7 @@ connected calls, each with a transcript. All 59 validation checks pass.
 ### Output
 
 ```
-data/phase2/synthetic_world_salud/
+Phase 2/data/synthetic_world_salud/
   crm/            6 tables shaped exactly like Salud's schema (the only valid model inputs)
   truth/          hidden traits and true outcomes (for evaluation only, never use as features)
   transcripts/    one template transcript per connected call
@@ -213,25 +213,26 @@ data/phase2/synthetic_world_salud/
 
 ### The propensity models
 
-**Master file (next training data):** `salud-propensity master` writes `reports/phase2/pre_training_data.xlsx`, one row per
+**Master file (next training data):** `salud-propensity master` writes `Phase 2/reports/pre_training_data.xlsx`, one row per
 call for both models. Synthetic rows come from the master world (`configs/synthetic_world_master.json`: Salud's time frame,
 calls up to 2026-11-18, 55/55 statistics; generate it with
-`salud-synth --config configs/synthetic_world_master.json --out data/phase2/synthetic_world_master --transcripts none`);
+`salud-synth --config configs/synthetic_world_master.json --out "Phase 2/data/synthetic_world_master" --transcripts none`);
 real rows are Salud's 84 calls. Columns `data_type` (synthetic / real), `split` (train / test by patient, real_test),
 `label_usable` and `post_call_row` select the rows; the pre-call model uses the 11 history columns, the post-call model
-32. Synthetic sentiment and QA are sampled from the real calls with the same outcome. The notebooks still use the
-earlier files until they are re-run.
-Feature selection: [`feature-selection.md`](feature-selection.md) (notebook 13: which features matter, how it was checked, the saved sets).
+32. Synthetic sentiment and QA are sampled from the real calls with the same outcome. EDA: `Phase 2/notebooks/01_master_data_eda.ipynb`;
+feature importance: `Phase 2/notebooks/02_feature_selection.ipynb`. Model building is split across six people:
+[`Phase 2/Task/`](Phase%202/Task/) (one self-contained instruction file per model family).
+Feature selection: [`Phase 2/progress/feature-selection.md`](Phase%202/progress/feature-selection.md) (notebook 02: which features matter, how it was checked, the saved sets).
 Checks: `salud-propensity master` runs 26 integrity checks before writing; `salud-propensity verify` rebuilds every model
 field and target from the raw tables with separate code and reports mismatches.
 
-- **Pre-call:** one row per synthetic patient with an open balance on 2026-04-01. The label is any payment within 30 days; the features
-  are 11 that exist in Salud's data. 86 variants are compared in `notebooks/00`–`11` with repeated grouped 5×5 cross-validation, and the
-  chosen model (monotone LightGBM) is tested once on the real rows. The scores for Salud are in `reports/phase2/propensity_scores.xlsx`.
-- **Post-call:** one row per call with no payment on the call. It adds how the call ended, sentiment and the QA score, and is a comparison
-  only so far.
+- **Pre-call:** any payment within 30 days of the call day, from the patient's history only (who to call first).
+- **Post-call:** calls with no payment on the call; adds how the call ended, sentiment and the QA score.
+- **Earlier pipeline (removed 2026-11-18):** notebooks 00–11 trained on a fixed-date design from the Salud-tuned world
+  (chosen model: monotone LightGBM, real AUC 0.697). Its results are kept in [`Phase 2/progress/eval-model.md`](Phase%202/progress/eval-model.md)
+  and git history; its scores for Salud are still in `Phase 2/reports/propensity_scores.xlsx`.
 - **Real QA:** `salud-propensity qa` runs Stage 1 QA on the real calls with the dashboard's prompt. It sends the redacted transcripts to Groq,
-  and results stay local in `reports/phase2/qa_real.csv`.
+  and results stay local in `Phase 2/reports/qa_real.csv`.
 
 ### Conventions (open items in the handoff)
 
@@ -289,11 +290,17 @@ src/salud_pipeline/
     outcome_labels.py   self-pay outcome labels at account grain
     synthetic/          synthetic world generator (salud-synth), calibration against Salud (salud-synth-calibrate)
     propensity/         snapshots, feature dictionary, modelling code, real QA (salud-propensity)
-notebooks/              00-11: data review, model families, ensembles, final model and real test
+api/                    Vercel entry point for the dashboard website
+app/                    the new app (FastAPI backend + React frontend): Agent Call Reviews and Payment Propensity; see app/README.md
 db/migrations/          Postgres schema as code (001 big_synthetic … 007 sentiment, 009 final package)
-configs/                phase1_synthetic_calls.txt, synthetic_world.json (original), synthetic_world_salud.json (default)
-results/                tracked results (Phase 1 LLM vs ML decision)
+configs/                phase1_synthetic_calls.txt, synthetic_world.json (original), synthetic_world_salud.json, synthetic_world_master.json (master file)
 branding/               dashboard logo
 tests/                  database tests use the Neon 'tests' branch
-data/, reports/         local source files and outputs (gitignored)
+data/                   Salud's source files, shared by both phases (gitignored)
+Phase 1/                call analysis: data/ and reports/ (gitignored), results/ (LLM vs ML decision), presentation/ (midpoint)
+Phase 2/                payment propensity:
+  notebooks/            01 EDA of the master file, 02 feature selection (L1 / L2 / elastic net)
+  Task/                 one instruction file per model family (six people)
+  progress/             reflections (watch list), eval-model, lessons-learned, feature-selection
+  data/, reports/       synthetic master world; pre_training_data.xlsx, real QA, experiments (gitignored)
 ```

@@ -7,7 +7,7 @@ Inputs (from the team's Neon database, see store.py):
   - reviewed tags saved from the dashboard by every rater
   - planted labels of the synthetic calls
 
-Outputs (reports/phase1/comparison/):
+Outputs (Phase 1/reports/comparison/):
   - phase1_results.xlsx  Summary, Calls, Coaching, AI vs human, Rater agreement, Synthetic check, Salud format,
                          Definitions
   - calls.csv, coaching.csv, ai_vs_human.csv, rater_agreement.csv  (same tables, database-friendly)

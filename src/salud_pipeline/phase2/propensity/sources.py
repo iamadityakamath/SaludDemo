@@ -132,7 +132,7 @@ def load_real(url: str | None = None) -> World:
     return World("real", calls, contacts, accounts, links, tx, tx["post_date"].max(), transcripts)
 
 
-# ---------- synthetic: data/phase2/synthetic_world ----------
+# ---------- synthetic: Phase 2/data/synthetic_world ----------
 
 def load_synthetic(world: Path = PHASE2_SYNTHETIC_WORLD, handoff_json: Path = HANDOFF_JSON) -> World:
     crm = world / "crm"

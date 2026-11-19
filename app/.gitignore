@@ -1,0 +1,12 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+# Backend
+backend/.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+# Local environment (the app reads the repository root .env; never commit either)
+.env
+.env.*

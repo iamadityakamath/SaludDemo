@@ -4,7 +4,7 @@ This repo is UIUC BIG Team B's Salud project. A teammate has just cloned it and 
 agent dashboard**. Your job: get the dashboard running and open it for them. Follow these steps in order
 and keep your messages short; the user is a teammate, not necessarily a developer.
 
-**If the user gave you a task file from `Task/` (model training for the propensity project), follow that file
+**If the user gave you a task file from `Phase 2/Task/` (model training for the propensity project), follow that file
 instead of this one.** It is self-contained and says what you may change; the dashboard steps below don't apply.
 
 **First, check whether they need local setup at all:** the dashboard is also a website,

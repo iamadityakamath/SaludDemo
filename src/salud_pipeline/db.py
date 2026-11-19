@@ -5,9 +5,9 @@
 
 `setup` is safe to run again at any time. It only adds what is missing:
 - applies migrations not yet recorded in public.schema_migrations
-- loads big_synthetic (Salud's CRM tables, synthetic) from data/phase2/synthetic_world if it is empty
-- imports the 60 Phase 1 calls with transcripts, the AI analyses from reports/phase1/ai_analyses.json,
-  and reviewed tags from data/phase1/reviewed_tags/, never overwriting rows teammates already saved in the
+- loads big_synthetic (Salud's CRM tables, synthetic) from Phase 2/data/synthetic_world if it is empty
+- imports the 60 Phase 1 calls with transcripts, the AI analyses from Phase 1/reports/ai_analyses.json,
+  and reviewed tags from Phase 1/data/reviewed_tags/, never overwriting rows teammates already saved in the
   database.
 
 After setup, the dashboard and `salud-phase1 analyze` / `compare` work directly against the database.

@@ -1,4 +1,4 @@
-"""Shared machinery for the propensity notebooks (notebooks/): data, feature sets, preprocessing, selection,
+"""Shared machinery for the propensity notebooks (Phase 2/notebooks/): data, feature sets, preprocessing, selection,
 cross-validation with logging, metrics and model comparison.
 
 Every notebook runs experiments the same way:

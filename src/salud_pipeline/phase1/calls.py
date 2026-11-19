@@ -1,7 +1,7 @@
 """The 60 Phase 1 calls and where their manual tags are saved.
 
 - Real: the 10 redacted Salud calls.
-- Synthetic: 50 LLM-written calls from data/phase1/synthetic_calls, listed in configs/phase1_synthetic_calls.txt.
+- Synthetic: 50 LLM-written calls from Phase 1/data/synthetic_calls, listed in configs/phase1_synthetic_calls.txt.
   The 50 were picked from 168 to cover every planted outcome and scenario, failures of every checklist item,
   and some all-pass calls.
 

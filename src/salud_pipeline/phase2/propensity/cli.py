@@ -1,18 +1,18 @@
 """Payment propensity, Step 1: the modeling files.
 
-    salud-propensity build                 # real snapshots -> reports/phase2/propensity_dataset.xlsx (test data),
-                                           # synthetic -> reports/phase2/synthetic_snapshots_salud.csv (one row per
+    salud-propensity build                 # real snapshots -> Phase 2/reports/propensity_dataset.xlsx (test data),
+                                           # synthetic -> Phase 2/reports/synthetic_snapshots_salud.csv (one row per
                                            #   call: post-call training) and synthetic_fixed_date_salud.csv (one row
                                            #   per patient on 2026-04-01: pre-call training). --world original: old world
     salud-propensity sentiment --synthetic # score the synthetic transcripts (local model, slow, cached)
     salud-propensity master                # master file: synthetic (master world) + real calls, one row per call
-                                           #   -> reports/phase2/pre_training_data.xlsx
+                                           #   -> Phase 2/reports/pre_training_data.xlsx
     salud-propensity verify                # rebuild the master file's fields from the raw tables (separate code)
     salud-propensity qa                    # Stage 1 QA of the 84 real calls with the dashboard's prompt
                                            #   (SENDS the redacted transcripts to the LLM provider; cached)
 
 Real data is read from the Neon schema `final`; synthetic from the world folder in paths.PHASE2_WORLDS
-(default "salud": data/phase2/synthetic_world_salud). Sentiment runs locally (nothing leaves the machine).
+(default "salud": Phase 2/data/synthetic_world_salud). Sentiment runs locally (nothing leaves the machine).
 Outputs are gitignored.
 """
 

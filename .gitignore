@@ -17,10 +17,14 @@ data/BIG_Final_Package_84/
 docs/
 
 # Generated data: synthetic calls, synthetic world, manual tags (reproducible or personal)
+/Phase 1/data/
+/Phase 2/data/
 data/phase1/
 data/phase2/
 
-# Generated reports and LLM outputs
+# Generated reports and LLM outputs (they include Salud's real calls: never commit)
+/Phase 1/reports/
+/Phase 2/reports/
 reports/
 
 # Secrets (API keys)

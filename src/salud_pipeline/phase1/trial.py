@@ -5,7 +5,7 @@
     salud-phase1 trial --limit 20          # at most 20 new LLM requests this run
 
 Each new analysis is added to phase1.ai_analysis_versions (never to phase1.ai_analyses, so the dashboard and
-existing tags are untouched) and to reports/phase1/ai_versions/<prompt version>.json. Calls already stored
+existing tags are untouched) and to Phase 1/reports/ai_versions/<prompt version>.json. Calls already stored
 for this model and prompt version are skipped, so a run can be repeated after Groq's daily cap.
 
 Tags were made by correcting the dashboard version's pre-filled answers, so they lean towards that version.

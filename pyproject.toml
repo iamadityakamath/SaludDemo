@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
-# Propensity modelling notebooks (notebooks/): uv pip install -e '.[dev,model]'
+# Propensity modelling notebooks (Phase 2/notebooks/): uv pip install -e '.[dev,model]'
 model = [
     "scikit-learn>=1.5",
     "lightgbm>=4.3",

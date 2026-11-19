@@ -1,7 +1,7 @@
 """Generate a synthetic run.
 
-    salud-synth --config configs/synthetic_world.json            # Phase 2 world -> data/phase2/synthetic_world
-    salud-synth --config configs/synthetic_world.json --out data/phase1/synthetic_calls \
+    salud-synth --config configs/synthetic_world.json            # Phase 2 world -> Phase 2/data/synthetic_world
+    salud-synth --config configs/synthetic_world.json --out "Phase 1/data/synthetic_calls" \
         --transcripts llm --llm-model qwen/qwen3.8-27b --llm-limit 300   # how the Phase 1 calls were written
 
 Output layout:

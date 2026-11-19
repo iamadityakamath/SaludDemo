@@ -1,6 +1,6 @@
 """Compare a synthetic world with Salud's real package, statistic by statistic.
 
-    salud-synth-calibrate --world data/phase2/synthetic_world_salud      # report vs the real package (Neon `final`)
+    salud-synth-calibrate --world "Phase 2/data/synthetic_world_salud"      # report vs the real package (Neon `final`)
 
 Every statistic is computed with the same code on both worlds (sources.World -> snapshots.build), on the same
 population: *recorded calls* (agent calls, phone-menu calls, messages left) and one row per patient as of each call.
