@@ -179,6 +179,20 @@ Real-data numbers come from very few rows, so treat them as directions, not meas
     - **Ask Salud:** a dated balance history, or the charge transactions.
 ---
 
+## 2026-11-19 · Merged to main; teammates keep the data file in the repository root
+
+**Merge:** `final` fast-forwarded into `main` (nothing on main was missing from final). Main deploys the live website, so
+first: the `final` preview of the same commit built successfully, and the website's own code was checked locally against
+today's changes (loads, finds the moved logo, lists 144 calls all done, nothing pending for the cron). Production
+deployment READY; live site, logo and sign-in checked afterwards.
+
+**Data file location:** teammates save `pre_training_data.xlsx` in the **repository root**. A file there wasn't covered by
+`.gitignore`, so `pre_training_data*.xlsx` is now ignored anywhere (checked with `git check-ignore` and `git status`).
+The shared code looks in the root first, then `Phase 2/reports/` (the lead's copy). All six files' code passed with a
+temporary root copy (removed afterwards).
+
+---
+
 ## 2026-11-19 · Salud's package calls in the app, logo moved, model folders, model-storage plan
 
 **Salud's package calls:** 76 of the 84 final-package transcripts weren't in Agent Call Reviews (8 are the earlier real

@@ -65,9 +65,9 @@ says `.venv/bin/`, use `.venv\Scripts\`. Paths with a space (`Phase 2/...`) need
 
 In Jupyter, VS Code or Cursor, pick the kernel **Salud (project venv)** for your notebook.
 
-**The data file.** Your lead sends you `pre_training_data.xlsx` through a private channel. Put it at
-`Phase 2/reports/pre_training_data.xlsx` (that folder is gitignored, so it is never committed). Do not upload
-it anywhere else, and do not pass it to any online service.
+**The data file.** Your lead sends you `pre_training_data.xlsx` through a private channel. Save it in the
+**repository root** (the folder with `README.md` and `pyproject.toml`), as `pre_training_data.xlsx`. Git ignores that
+file name, so it is never committed. Don't rename it, don't upload it anywhere else, and don't pass it to any online service.
 
 **Check you have the right file** (run once; every number must match):
 
@@ -75,7 +75,7 @@ it anywhere else, and do not pass it to any online service.
 import hashlib, pandas as pd
 from pathlib import Path
 ROOT = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "pyproject.toml").exists())   # works from any folder
-m = pd.read_excel(ROOT / "Phase 2" / "reports" / "pre_training_data.xlsx")
+m = pd.read_excel(ROOT / "pre_training_data.xlsx")
 key = m.sort_values("call_id")[["call_id", "split", "paid_30d", "paid_after_call_30d"]].astype(str).agg("|".join, axis=1)
 print(m.shape, hashlib.sha256("\n".join(key).encode()).hexdigest()[:16])
 print(m.groupby(["data_type", "split"]).agg(rows=("call_id", "size"), usable=("label_usable", "sum")))
@@ -155,7 +155,7 @@ for logistic regression and LightGBM.
 **Privacy.** The real rows are Salud's patients (redacted IDs, but real billing data).
 - Never print, paste or screenshot real rows (individual values, IDs, or labels) into a chat, an AI prompt, a report or
   a commit. Aggregates only (counts, rates, AUCs).
-- Never commit the data file or anything that contains real rows or real-row predictions. The shared code writes those
+- Never commit the data file (it stays in the repository root, ignored by git) or anything that contains real rows or real-row predictions. The shared code writes those
   to `Phase 2/reports/tasks/gradient_boosting/` (gitignored). Send that folder to your lead privately at the end.
 - Don't send the data to online services or external LLMs.
 - Notebook outputs are stripped on commit only if you ran `nbstripout --install` (section 3). Check before your first commit.
@@ -206,7 +206,10 @@ FAMILY = "gradient_boosting"          # your model family (already filled in in 
 SEED = 42
 # The repository root, found from wherever the notebook runs (Jupyter starts in the notebook's own folder).
 ROOT = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "pyproject.toml").exists() and (p / "Phase 2").exists())
-DATA = ROOT / "Phase 2" / "reports" / "pre_training_data.xlsx"
+# The data file: in the repository root (where you save it), or in Phase 2/reports/ (the lead's copy).
+DATA = next((p for p in (ROOT / "pre_training_data.xlsx", ROOT / "Phase 2" / "reports" / "pre_training_data.xlsx")
+             if p.exists()), None)
+assert DATA, f"pre_training_data.xlsx not found: save it in the repository root ({ROOT})"
 OUT = ROOT / "Phase 2" / "notebooks" / FAMILY                    # your folder: notebook + committed, synthetic-only outputs
 PRIVATE = ROOT / "Phase 2" / "reports" / "tasks" / FAMILY       # NOT committed (gitignored): anything derived from real rows
 OUT.mkdir(parents=True, exist_ok=True); PRIVATE.mkdir(parents=True, exist_ok=True)
@@ -550,7 +553,7 @@ Commit on branch `task/gradient_boosting`:
 | `Phase 2/notebooks/gradient_boosting/synthetic_predictions_pre.csv`, `…_post.csv` | written by `final_model` (synthetic rows only) |
 | `Phase 2/notebooks/gradient_boosting/report.md` | your report, using the template below |
 
-**Do not commit:** `Phase 2/reports/` (the data and `Phase 2/reports/tasks/gradient_boosting/real_predictions_*.csv`), model files,
+**Do not commit:** `pre_training_data.xlsx`, `Phase 2/reports/` (including `Phase 2/reports/tasks/gradient_boosting/real_predictions_*.csv`), model files,
 anything with real rows. Send the `Phase 2/reports/tasks/gradient_boosting/` folder to your lead privately.
 **Do not change:** anything under `src/`, `tests/`, `configs/`, other people's folders, or the `Phase 2/Task/*.md` files.
 
@@ -588,5 +591,5 @@ Then tell your lead the branch is pushed and send `Phase 2/reports/tasks/gradien
 - [ ] Real data measured only with `real_eval`; number of looks reported.
 - [ ] Synthetic test split used only through `final_model`.
 - [ ] Notebook runs top to bottom; outputs stripped in the commit (`git show --stat` shows a small notebook).
-- [ ] No real rows, IDs or real predictions in the commit, the report or any chat.
+- [ ] No real rows, IDs or real predictions in the commit, the report or any chat (`git status` must not list `pre_training_data.xlsx`).
 - [ ] Report written with the template.

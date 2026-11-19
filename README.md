@@ -11,6 +11,39 @@ One connected pipeline: **call transcript → QA / sentiment scores → payment 
 
 Phase 1's AI analyses (`phase1.ai_analyses`, joined to `big_synthetic` accounts) become Phase 2's call-quality input. The brief requires the two stages to connect rather than be separate projects.
 
+## Start here: Phase 2 model building (one model family per person)
+
+Each person builds one family of payment-propensity models. Everyone uses the same data, rules and evaluation code, so
+the results can be compared and combined at the end.
+
+| Person | Your task file (full instructions) | Model family | Your folder |
+|---|---|---|---|
+| **Avni** | [`Phase 2/Task/1_logistic_regression.md`](Phase%202/Task/1_logistic_regression.md) | Logistic regression (L1 / L2 / elastic net) | `Phase 2/notebooks/logistic_regression/` |
+| **Sharayu** | [`Phase 2/Task/2_woe_scorecard.md`](Phase%202/Task/2_woe_scorecard.md) | Scorecard (weight-of-evidence) | `Phase 2/notebooks/woe_scorecard/` |
+| **Aditya** | [`Phase 2/Task/3_decision_tree.md`](Phase%202/Task/3_decision_tree.md) | Decision tree | `Phase 2/notebooks/decision_tree/` |
+| **Ibrahim** | [`Phase 2/Task/4_random_forest.md`](Phase%202/Task/4_random_forest.md) | Random forest + extra trees | `Phase 2/notebooks/random_forest/` |
+| **Ananya** | [`Phase 2/Task/5_gradient_boosting.md`](Phase%202/Task/5_gradient_boosting.md) | Gradient boosting (LightGBM) | `Phase 2/notebooks/gradient_boosting/` |
+| **Rudrakshi** | [`Phase 2/Task/6_other_models.md`](Phase%202/Task/6_other_models.md) | Other models (kNN, SVM, neural network, naive Bayes) | `Phase 2/notebooks/other_models/` |
+
+**Steps**
+
+1. **Get the repo:** `git clone https://github.com/iamadityakamath/SaludDemo` (or `git checkout final && git pull` if you
+   already have it).
+2. **Get the data file** `pre_training_data.xlsx` from Aditya (sent privately; it contains Salud's real calls) and save
+   it in the **repository root**, next to this README. Don't rename it. Git ignores it, so it is never committed; never
+   upload or share it anywhere else.
+3. **Open your task file** from the table and follow it from section 3 (setup, your own branch `task/<model family>`,
+   a check that your data file is the right one). If you use an AI assistant (Claude Code, Cursor, ChatGPT / Codex),
+   give it **your task file** to read: it is written for both you and your assistant and contains everything, including
+   the shared code.
+4. **Work only in your folder** (last column). Your notebook, results file, prediction files and report all go there.
+5. **Hand back** as your task file says (sections 11–13): push your branch and tell Aditya; send your
+   `Phase 2/reports/tasks/<model family>/` folder privately.
+
+**Rules that matter most:** never paste real rows of the data into a chat or an AI prompt (only counts, rates and
+scores); never commit the data file or anything with real rows; measure real-data performance only with `real_eval()`
+from the shared code. Deadline and questions: ask Aditya.
+
 ## Team setup
 
 **Just analyzing calls?** Use the team website, **https://agent-call-analysis.vercel.app**: sign in with the team passcode (shared privately by the team lead) and pick your name. There's nothing to install. The setup below is for running things locally.

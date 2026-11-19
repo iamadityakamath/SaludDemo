@@ -22,6 +22,10 @@ docs/
 data/phase1/
 data/phase2/
 
+# The master training file includes Salud's real calls: never commit it, wherever it is saved
+# (teammates keep it in the repository root; the lead in Phase 2/reports/)
+pre_training_data*.xlsx
+
 # Generated reports and LLM outputs (they include Salud's real calls: never commit)
 /Phase 1/reports/
 /Phase 2/reports/
